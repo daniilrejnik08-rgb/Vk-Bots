@@ -21,8 +21,8 @@ if not ENV_ADMINS:
     ENV_ADMINS = [854071888]
 
 DB_NAME = "crmp_bot.db"
-PROJECT = "CRMP:PRP Games"
-PROJECT_SHORT = "PRP Games"
+PROJECT = "Prp Bot"
+PROJECT_SHORT = "Rpr Games"
 
 DAILY_BONUS = 500
 WORK_MIN = 150
@@ -44,6 +44,12 @@ class RegState(BaseStateGroup):
 
 class IdeaState(BaseStateGroup):
     TEXT = 1
+
+
+class RecoverState(BaseStateGroup):
+    NICK = 1
+    EMAIL = 2
+    COMMENT = 3
 
 
 def hash_password(password: str, salt: str | None = None):
@@ -83,6 +89,43 @@ async def react_to(message: Message, reaction_id: int = 1):
         )
     except Exception:
         pass
+
+
+
+SERVER_NAME = "Rpr Games"
+SERVER_LABEL = "Rpr Games | Основной сервер"
+
+FAKE_PLAYERS = {
+    "Danya_Nik": {"money": 1_250_000, "donate": 500},
+    "Artem_Shpets": {"money": 980_000, "donate": 250},
+}
+
+
+def format_server_notify(nick: str, action: str, ip: str | None = None) -> str:
+    """action: join | leave"""
+    data = FAKE_PLAYERS.get(nick) or {
+        "money": random.randint(50_000, 5_000_000),
+        "donate": random.randint(0, 2000),
+    }
+    money = f"{data['money']:,}".replace(",", " ")
+    donate = data["donate"]
+    ip = ip or f"192.168.{random.randint(0, 255)}.{random.randint(1, 254)}"
+    if action == "join":
+        head = f"Ваш персонаж {nick} вошёл на сервер"
+    else:
+        head = f"Ваш персонаж {nick} покинул сервер"
+    return (
+        f"{head}\n"
+        f"IP-адрес: {ip}\n\n"
+        f"Деньги: {money} руб.\n"
+        f"Донат: {donate} клубичек\n\n"
+        f"— Сервер: {SERVER_LABEL}"
+    )
+
+
+async def notify_admins_server(api, text: str):
+    for aid in await all_admin_ids():
+        await notify_user(api, aid, text)
 
 
 async def init_db():
@@ -502,6 +545,8 @@ async def main_menu(user_id: int):
     kb = Keyboard(one_time=False)
     if not player:
         kb.add(Text("📝 Регистрация в игре"), color=KeyboardButtonColor.POSITIVE)
+        kb.row()
+        kb.add(Text("🔁 Восстановить аккаунт"), color=KeyboardButtonColor.SECONDARY)
     else:
         kb.add(Text("👤 Личный кабинет"), color=KeyboardButtonColor.PRIMARY)
         kb.add(Text("🎮 Мой аккаунт"), color=KeyboardButtonColor.SECONDARY)
@@ -551,6 +596,10 @@ def admin_keyboard():
         .add(Text("⭐ Админы бота"), color=KeyboardButtonColor.SECONDARY)
         .row()
         .add(Text("❓ Админ-помощь"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("🟢 Фейк вход"), color=KeyboardButtonColor.POSITIVE)
+        .add(Text("🔴 Фейк выход"), color=KeyboardButtonColor.NEGATIVE)
+        .row()
         .add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
     )
 
@@ -578,7 +627,7 @@ async def start(message: Message):
     if not player:
         await react_to(message, 1)
         await message.answer(
-            "🎮 Добро пожаловать на Enhanced CRMP сервер!\n"
+            "🎮 Добро пожаловать в Prp Bot!\n"
             f"Проект: {PROJECT}\n\n"
             "🆕 НОВЫЕ ВОЗМОЖНОСТИ:\n"
             "• 🏆 Система уровней и опыта\n"
@@ -731,7 +780,7 @@ async def reg_password(message: Message):
         f"• Логин: {nick}\n"
         f"• Пароль: {masked}\n\n"
         "⚠️ Сохраните эти данные! После этого сообщения полный пароль больше не будет показан.\n\n"
-        f"Удачной игры на нашем CRMP сервере {PROJECT_SHORT}! 🚗",
+        f"Удачной игры на сервере {PROJECT_SHORT}! 🚗",
         keyboard=await main_menu(message.from_id),
     )
     for aid in await all_admin_ids():
@@ -966,13 +1015,23 @@ async def admin_help(message: Message):
     if not await is_admin(message.from_id):
         return
     await message.answer(
-        "Команды:\n"
-        "info Ник | выдать Ник 1000 | забрать Ник 500 | баланс Ник 5000\n"
-        "уровень Ник 5 | бан Ник [причина] | разбан Ник\n"
-        "пред Ник текст | сказать Ник текст | удалить Ник\n"
-        "выдатьвсем 100 | рассылка Текст\n"
-        "админдобавить id / админубрать id\n"
-        "голосование Вопрос | да | нет | закрытьголос ID"
+        "🛠️ Команды Prp Bot\n\n"
+        "👤 Игроки:\n"
+        "• info Ник\n"
+        "• выдать / забрать / баланс / уровень\n"
+        "• бан / разбан / пред / сказать / удалить\n"
+        "• выдатьвсем 100 | рассылка Текст\n\n"
+        "⭐ Админы:\n"
+        "• админдобавить id | админубрать id\n\n"
+        "🗳️ Голосования:\n"
+        "• голосование Вопрос | да | нет\n"
+        "• закрытьголос ID | результаты ID\n\n"
+        "📡 Фейк сервер (Rpr Games):\n"
+        "• вход [Ник] — уведомление о входе\n"
+        "• выход [Ник] — уведомление о выходе\n"
+        "• Ники по умолчанию: Danya_Nik / Artem_Shpets\n"
+        "• Кнопки: 🟢 Фейк вход / 🔴 Фейк выход\n\n"
+        "🔁 Восстановление: заявки от игроков приходят админам"
     )
 
 
@@ -1103,6 +1162,110 @@ async def idea_done(message: Message):
     await notify_user(message.ctx_api, idea["user_id"], f"Идея #{iid} реализована!")
 
 
+
+
+# ----- Восстановление аккаунта -----
+@bot.on.message(text=["🔁 Восстановить аккаунт", "Восстановить аккаунт", "восстановить", "восстановление"])
+async def recover_start(message: Message):
+    if await get_player(message.from_id):
+        await message.answer("✅ У тебя уже есть привязанный аккаунт в боте.", keyboard=await main_menu(message.from_id))
+        return
+    await message.answer(
+        "🔁 Восстановление аккаунта\n\n"
+        "Если раньше играл на сервере, но бот «не видит» аккаунт — оставь заявку.\n"
+        "Поддержка проверит и восстановит доступ.\n\n"
+        "Шаг 1/3: укажи игровой ник (как в игре):",
+        keyboard=cancel_keyboard(),
+    )
+    await state_dispenser.set(message.peer_id, RecoverState.NICK)
+
+
+@bot.on.message(state=RecoverState.NICK)
+async def recover_nick(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("❌ Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    nick = (message.text or "").strip()
+    if len(nick) < 3:
+        await message.answer("Слишком короткий ник. Введи ещё раз:")
+        return
+    await state_dispenser.set(message.peer_id, RecoverState.EMAIL, nickname=nick)
+    await message.answer(
+        "Шаг 2/3: email, который указывал при регистрации\n(или «-» если не помнишь):",
+        keyboard=cancel_keyboard(),
+    )
+
+
+@bot.on.message(state=RecoverState.EMAIL)
+async def recover_email(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("❌ Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    email = (message.text or "").strip()
+    payload = dict(message.state_peer.payload or {})
+    payload["email"] = email
+    await state_dispenser.set(message.peer_id, RecoverState.COMMENT, **payload)
+    await message.answer(
+        "Шаг 3/3: кратко опиши ситуацию\n"
+        "(когда играл, что помнишь, почему нужен доступ):",
+        keyboard=cancel_keyboard(),
+    )
+
+
+@bot.on.message(state=RecoverState.COMMENT)
+async def recover_finish(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("❌ Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    comment = (message.text or "").strip()
+    if len(comment) < 5:
+        await message.answer("Напиши чуть подробнее:")
+        return
+    payload = dict(message.state_peer.payload or {})
+    nick = payload.get("nickname", "?")
+    email = payload.get("email", "-")
+    await state_dispenser.delete(message.peer_id)
+    await react_to(message, 1)
+    await message.answer(
+        "✅ Заявка на восстановление отправлена поддержке.\n"
+        "Ожидай ответа администратора.",
+        keyboard=await main_menu(message.from_id),
+    )
+    note = (
+        f"🔁 Заявка на восстановление аккаунта\n\n"
+        f"VK: [id{message.from_id}|пользователь]\n"
+        f"Ник: {nick}\n"
+        f"Email: {email}\n"
+        f"Комментарий: {comment}"
+    )
+    for aid in await all_admin_ids():
+        await notify_user(message.ctx_api, aid, note)
+
+
+# ----- Фейк вход / выход на сервер Rpr Games -----
+@bot.on.message(text=["🟢 Фейк вход", "Фейк вход", "фейк вход"])
+async def fake_join_btn(message: Message):
+    if not await is_admin(message.from_id):
+        return
+    nick = random.choice(list(FAKE_PLAYERS.keys()))
+    text_n = format_server_notify(nick, "join")
+    await notify_admins_server(message.ctx_api, text_n)
+    await message.answer(f"✅ Админам отправлено:\n\n{text_n}")
+
+
+@bot.on.message(text=["🔴 Фейк выход", "Фейк выход", "фейк выход"])
+async def fake_leave_btn(message: Message):
+    if not await is_admin(message.from_id):
+        return
+    nick = random.choice(list(FAKE_PLAYERS.keys()))
+    text_n = format_server_notify(nick, "leave")
+    await notify_admins_server(message.ctx_api, text_n)
+    await message.answer(f"✅ Админам отправлено:\n\n{text_n}")
+
+
 @bot.on.message()
 async def text_commands(message: Message):
     text = (message.text or "").strip()
@@ -1138,6 +1301,27 @@ async def text_commands(message: Message):
 
     if not await is_admin(uid):
         return
+
+
+    if low.startswith("вход") or low.startswith("выход"):
+        parts = text.split()
+        action = "join" if low.startswith("вход") else "leave"
+        if len(parts) >= 2:
+            nick = parts[1].strip()
+        else:
+            nick = random.choice(list(FAKE_PLAYERS.keys()))
+        # normalize known nicks case-insensitive
+        for k in FAKE_PLAYERS:
+            if k.lower() == nick.lower():
+                nick = k
+                break
+        if nick not in FAKE_PLAYERS and len(parts) < 2:
+            nick = random.choice(list(FAKE_PLAYERS.keys()))
+        msg_n = format_server_notify(nick, action)
+        await notify_admins_server(api, msg_n)
+        await message.answer(f"✅ Отправлено админам:\n\n{msg_n}")
+        return
+
 
     if low.startswith("info ") or low.startswith("инфо "):
         p = await resolve_player(text.split(maxsplit=1)[1])
