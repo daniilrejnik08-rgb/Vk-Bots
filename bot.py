@@ -64,14 +64,21 @@ def mask_password(password: str) -> str:
     return password[:2] + "*" * (len(password) - 2)
 
 
-async def notify_user(api, user_id: int, text: str, keyboard=None):
+async def notify_user(api, user_id: int, text: str, keyboard=None) -> bool:
+    """Личное сообщение пользователю (ЛС)."""
     try:
-        kwargs = {"user_id": user_id, "message": text, "random_id": 0}
+        kwargs = {
+            "user_id": int(user_id),
+            "peer_id": int(user_id),  # явно в личку
+            "message": text,
+            "random_id": 0,
+        }
         if keyboard is not None:
             kwargs["keyboard"] = keyboard
         await api.messages.send(**kwargs)
+        return True
     except Exception:
-        pass
+        return False
 
 
 
@@ -118,14 +125,18 @@ def format_server_notify(nick: str, action: str, ip: str | None = None) -> str:
         f"{head}\n"
         f"IP-адрес: {ip}\n\n"
         f"Деньги: {money} руб.\n"
-        f"Донат: {donate} клубичек\n\n"
+        f"Донат: {donate} Prp Coin\n\n"
         f"— Сервер: {SERVER_LABEL}"
     )
 
 
-async def notify_admins_server(api, text: str):
+async def notify_admins_server(api, text: str) -> int:
+    """Рассылка админам строго в личные сообщения. Возвращает число успешных доставок."""
+    ok = 0
     for aid in await all_admin_ids():
-        await notify_user(api, aid, text)
+        if await notify_user(api, aid, text):
+            ok += 1
+    return ok
 
 
 async def init_db():
@@ -1252,8 +1263,10 @@ async def fake_join_btn(message: Message):
         return
     nick = random.choice(list(FAKE_PLAYERS.keys()))
     text_n = format_server_notify(nick, "join")
-    await notify_admins_server(message.ctx_api, text_n)
-    await message.answer(f"✅ Админам отправлено:\n\n{text_n}")
+    sent = await notify_admins_server(message.ctx_api, text_n)
+    await message.answer(
+        f"✅ Уведомление о входе отправлено админам в ЛС: {sent}\n\n{text_n}"
+    )
 
 
 @bot.on.message(text=["🔴 Фейк выход", "Фейк выход", "фейк выход"])
@@ -1262,8 +1275,10 @@ async def fake_leave_btn(message: Message):
         return
     nick = random.choice(list(FAKE_PLAYERS.keys()))
     text_n = format_server_notify(nick, "leave")
-    await notify_admins_server(message.ctx_api, text_n)
-    await message.answer(f"✅ Админам отправлено:\n\n{text_n}")
+    sent = await notify_admins_server(message.ctx_api, text_n)
+    await message.answer(
+        f"✅ Уведомление о выходе отправлено админам в ЛС: {sent}\n\n{text_n}"
+    )
 
 
 @bot.on.message()
@@ -1318,8 +1333,8 @@ async def text_commands(message: Message):
         if nick not in FAKE_PLAYERS and len(parts) < 2:
             nick = random.choice(list(FAKE_PLAYERS.keys()))
         msg_n = format_server_notify(nick, action)
-        await notify_admins_server(api, msg_n)
-        await message.answer(f"✅ Отправлено админам:\n\n{msg_n}")
+        sent = await notify_admins_server(api, msg_n)
+        await message.answer(f"✅ Отправлено админам в ЛС: {sent}\n\n{msg_n}")
         return
 
 
