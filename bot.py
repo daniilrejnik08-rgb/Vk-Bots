@@ -1640,6 +1640,7 @@ async def require_player(message: Message):
 
 
 async def main_menu(user_id: int):
+    """Главное меню: макс. 10 рядов (лимит VK)."""
     player = await get_player(user_id)
     admin = await is_admin(user_id)
     kb = Keyboard(one_time=False)
@@ -1647,62 +1648,92 @@ async def main_menu(user_id: int):
         kb.add(Text("📝 Регистрация в игре"), color=KeyboardButtonColor.POSITIVE)
         kb.row()
         kb.add(Text("🔁 Восстановить аккаунт"), color=KeyboardButtonColor.SECONDARY)
-    else:
-        kb.add(Text("👤 Личный кабинет"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("🎮 Мой аккаунт"), color=KeyboardButtonColor.SECONDARY)
         kb.row()
+        kb.add(Text("📡 Статус сервера"), color=KeyboardButtonColor.PRIMARY)
+        kb.add(Text("ℹ️ Информация"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("📞 Связь с основателем"), color=KeyboardButtonColor.PRIMARY)
+    else:
+        # 8 рядов для игрока + опционально админ
+        kb.add(Text("👤 ЛК"), color=KeyboardButtonColor.PRIMARY)
         kb.add(Text("💼 Работа"), color=KeyboardButtonColor.POSITIVE)
         kb.add(Text("🎁 Ежедневка"), color=KeyboardButtonColor.POSITIVE)
         kb.row()
         kb.add(Text("🛒 Магазин"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("🎒 Инвентарь"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("🏆 Топ"), color=KeyboardButtonColor.SECONDARY)
-        kb.add(Text("🏅 Достижения"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("🏛️ Фракция"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("🎫 Тикет"), color=KeyboardButtonColor.PRIMARY)
-        kb.row()
-        kb.add(Text("🚨 Жалоба"), color=KeyboardButtonColor.NEGATIVE)
-        kb.add(Text("🔑 Сменить пароль"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("🗳️ Голосования"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("💡 Идея"), color=KeyboardButtonColor.PRIMARY)
-        kb.row()
-        kb.add(Text("🎁 Промокод"), color=KeyboardButtonColor.POSITIVE)
-        kb.add(Text("👥 Рефералка"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
         kb.add(Text("💎 Prp Coin"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("📅 Ивенты"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
         kb.add(Text("🏪 Биржа"), color=KeyboardButtonColor.PRIMARY)
+        kb.row()
+        kb.add(Text("🏛️ RP"), color=KeyboardButtonColor.PRIMARY)
+        kb.add(Text("🎮 Сообщество"), color=KeyboardButtonColor.PRIMARY)
+        kb.add(Text("⚙️ Аккаунт"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("🎫 Тикет"), color=KeyboardButtonColor.PRIMARY)
         kb.add(Text("📰 Новости"), color=KeyboardButtonColor.SECONDARY)
+        kb.add(Text("📡 Статус"), color=KeyboardButtonColor.PRIMARY)
         kb.row()
-        kb.add(Text("👑 Лидерство"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("⚖️ Апелляция"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("🔫 Розыск"), color=KeyboardButtonColor.NEGATIVE)
-        kb.add(Text("🤝 Напарник"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("🛡️ Клан"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("📸 Конкурс"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("📊 Активность"), color=KeyboardButtonColor.SECONDARY)
-        kb.add(Text("📜 История"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("⭐ Репутация"), color=KeyboardButtonColor.SECONDARY)
-        kb.add(Text("📧 Сменить email"), color=KeyboardButtonColor.SECONDARY)
-        kb.row()
-        kb.add(Text("🔐 2FA"), color=KeyboardButtonColor.SECONDARY)
-        kb.add(Text("📡 Статус сервера"), color=KeyboardButtonColor.PRIMARY)
-    kb.row()
-    kb.add(Text("ℹ️ Информация"), color=KeyboardButtonColor.SECONDARY)
-    kb.row()
-    kb.add(Text("📞 Связь с основателем"), color=KeyboardButtonColor.PRIMARY)
-    if admin:
-        kb.row()
-        kb.add(Text("🛠️ Админ-панель"), color=KeyboardButtonColor.NEGATIVE)
+        kb.add(Text("ℹ️ Инфо"), color=KeyboardButtonColor.SECONDARY)
+        kb.add(Text("📞 Основатель"), color=KeyboardButtonColor.PRIMARY)
+        if admin:
+            kb.row()
+            kb.add(Text("🛠️ Админ-панель"), color=KeyboardButtonColor.NEGATIVE)
     return kb
+
+
+def rp_menu():
+    return (
+        Keyboard(one_time=False)
+        .add(Text("🏛️ Фракция"), color=KeyboardButtonColor.PRIMARY)
+        .add(Text("👑 Лидерство"), color=KeyboardButtonColor.PRIMARY)
+        .row()
+        .add(Text("🔫 Розыск"), color=KeyboardButtonColor.NEGATIVE)
+        .add(Text("⚖️ Апелляция"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("🚨 Жалоба"), color=KeyboardButtonColor.NEGATIVE)
+        .add(Text("🛡️ Клан"), color=KeyboardButtonColor.PRIMARY)
+        .row()
+        .add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
+    )
+
+
+def community_menu():
+    return (
+        Keyboard(one_time=False)
+        .add(Text("🗳️ Голосования"), color=KeyboardButtonColor.PRIMARY)
+        .add(Text("💡 Идея"), color=KeyboardButtonColor.PRIMARY)
+        .row()
+        .add(Text("📅 Ивенты"), color=KeyboardButtonColor.SECONDARY)
+        .add(Text("📸 Конкурс"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("🤝 Напарник"), color=KeyboardButtonColor.SECONDARY)
+        .add(Text("🏆 Топ"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("📊 Активность"), color=KeyboardButtonColor.SECONDARY)
+        .add(Text("⭐ Репутация"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("🎁 Промокод"), color=KeyboardButtonColor.POSITIVE)
+        .add(Text("👥 Рефералка"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
+    )
+
+
+def account_menu():
+    return (
+        Keyboard(one_time=False)
+        .add(Text("👤 Личный кабинет"), color=KeyboardButtonColor.PRIMARY)
+        .add(Text("🎮 Мой аккаунт"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("🎒 Инвентарь"), color=KeyboardButtonColor.SECONDARY)
+        .add(Text("🏅 Достижения"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("📜 История"), color=KeyboardButtonColor.SECONDARY)
+        .add(Text("🔑 Сменить пароль"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("📧 Сменить email"), color=KeyboardButtonColor.SECONDARY)
+        .add(Text("🔐 2FA"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
+    )
 
 
 def cancel_keyboard():
@@ -2538,6 +2569,42 @@ async def contact_founder(message: Message):
         f"Напишите: https://vk.com/id{FOUNDER_ID}\n"
         f"Или создайте 🎫 Тикет в боте — куратор ответит."
     )
+
+
+
+@bot.on.message(text=["👤 ЛК", "ЛК"])
+async def menu_lk_short(message: Message):
+    await message.answer("⚙️ Раздел аккаунта:", keyboard=account_menu())
+
+
+@bot.on.message(text=["🏛️ RP", "RP", "рп"])
+async def menu_rp(message: Message):
+    await message.answer("🏛️ RP-раздел:", keyboard=rp_menu())
+
+
+@bot.on.message(text=["🎮 Сообщество", "Сообщество", "сообщество"])
+async def menu_community(message: Message):
+    await message.answer("🎮 Сообщество:", keyboard=community_menu())
+
+
+@bot.on.message(text=["⚙️ Аккаунт", "Аккаунт"])
+async def menu_account(message: Message):
+    await message.answer("⚙️ Аккаунт:", keyboard=account_menu())
+
+
+@bot.on.message(text=["📡 Статус", "Статус"])
+async def menu_status_short(message: Message):
+    await message.answer(format_server_status())
+
+
+@bot.on.message(text=["ℹ️ Инфо", "Инфо"])
+async def menu_info_short(message: Message):
+    await info(message)
+
+
+@bot.on.message(text=["📞 Основатель", "Основатель"])
+async def menu_founder_short(message: Message):
+    await contact_founder(message)
 
 
 @bot.on.message(text=["📰 Новости", "Новости", "новости"])
