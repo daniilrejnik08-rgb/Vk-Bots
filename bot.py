@@ -1005,8 +1005,8 @@ def start_reg_keyboard():
     )
 
 
-def admin_keyboard():
-    return (
+def admin_keyboard(show_fake: bool = False):
+    kb = (
         Keyboard(one_time=False)
         .add(Text("👥 Игроки"), color=KeyboardButtonColor.SECONDARY)
         .add(Text("📊 Статистика"), color=KeyboardButtonColor.PRIMARY)
@@ -1022,13 +1022,16 @@ def admin_keyboard():
         .row()
         .add(Text("📋 Лог админов"), color=KeyboardButtonColor.SECONDARY)
         .add(Text("⭐ Админы бота"), color=KeyboardButtonColor.SECONDARY)
-        .row()
-        .add(Text("🟢 Фейк вход"), color=KeyboardButtonColor.POSITIVE)
-        .add(Text("🔴 Фейк выход"), color=KeyboardButtonColor.NEGATIVE)
-        .row()
-        .add(Text("❓ Админ-помощь"), color=KeyboardButtonColor.SECONDARY)
-        .add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
     )
+    # Фейк вход/выход — только владельцу (ADMINS в .env)
+    if show_fake:
+        kb.row()
+        kb.add(Text("🟢 Фейк вход"), color=KeyboardButtonColor.POSITIVE)
+        kb.add(Text("🔴 Фейк выход"), color=KeyboardButtonColor.NEGATIVE)
+    kb.row()
+    kb.add(Text("❓ Админ-помощь"), color=KeyboardButtonColor.SECONDARY)
+    kb.add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
+    return kb
 
 
 def shop_keyboard():
@@ -1751,7 +1754,10 @@ async def admin_panel(message: Message):
     if not await is_admin(message.from_id):
         await message.answer("⛔ Нет доступа.")
         return
-    await message.answer(f"🛠️ Админ-панель {PROJECT}", keyboard=admin_keyboard())
+    await message.answer(
+        f"🛠️ Админ-панель {PROJECT}",
+        keyboard=admin_keyboard(show_fake=await is_owner(message.from_id)),
+    )
 
 
 @bot.on.message(text=["❓ Админ-помощь", "Админ-помощь", "админпомощь"])
@@ -1933,7 +1939,7 @@ async def back(message: Message):
 
 @bot.on.message(text=["🟢 Фейк вход", "Фейк вход", "фейк вход"])
 async def fake_join_btn(message: Message):
-    if not await is_admin(message.from_id):
+    if not await is_owner(message.from_id):
         return
     nick = random.choice(list(FAKE_PLAYERS.keys()))
     text_n = format_server_notify(nick, "join")
@@ -1944,7 +1950,7 @@ async def fake_join_btn(message: Message):
 
 @bot.on.message(text=["🔴 Фейк выход", "Фейк выход", "фейк выход"])
 async def fake_leave_btn(message: Message):
-    if not await is_admin(message.from_id):
+    if not await is_owner(message.from_id):
         return
     nick = random.choice(list(FAKE_PLAYERS.keys()))
     text_n = format_server_notify(nick, "leave")
@@ -2079,6 +2085,8 @@ async def text_commands(message: Message):
 
     # fake join/leave
     if low.startswith("вход") or low.startswith("выход"):
+        if not await is_owner(uid):
+            return
         parts = text.split()
         action = "join" if low.startswith("вход") else "leave"
         nick = parts[1].strip() if len(parts) >= 2 else random.choice(list(FAKE_PLAYERS.keys()))
