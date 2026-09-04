@@ -39,7 +39,7 @@ AUTO_FAKE_MAX_MINUTES = 45
 NICK_RE = re.compile(r"^[A-Za-z0-9_]{3,24}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-FRACTIONS = ["Полиция", "Медики", "Армия", "Мафия", "Правительство", "Такси", "Механики"]
+FRACTIONS = ["Полиция", "Медики", "Армия", "Мафия", "Правительство", "Такси", "Механики", "ФСБ"]
 
 # Автобан по словам (нижний регистр)
 BAN_WORDS = ["свобвк", "бесплатный вк", "накрутка", "продам читы", "сдам сервер"]
@@ -82,6 +82,8 @@ COIN_SHOP = {
 
 # Роли: owner > mod > helper
 ROLE_RANK = {"owner": 3, "mod": 2, "helper": 1}
+_role_cache: dict[int, tuple[float, str | None]] = {}
+ROLE_CACHE_TTL = 30.0
 
 state_dispenser = BuiltinStateDispenser()
 bot = Bot(token=TOKEN, state_dispenser=state_dispenser)
@@ -639,7 +641,7 @@ async def set_password(user_id: int, password: str):
         await db.commit()
 
 
-async def set_fraction(user_id: int, fraction: str):
+async def set_fraction(user_id: int, fraction: str | None):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE players SET fraction = ? WHERE user_id = ?", (fraction, user_id))
         await db.commit()
@@ -841,12 +843,21 @@ async def db_admins():
 
 
 async def get_role(uid: int) -> str | None:
+    import time
+    now = time.time()
+    cached = _role_cache.get(uid)
+    if cached and now - cached[0] < ROLE_CACHE_TTL:
+        return cached[1]
+    role = None
     if uid in ENV_ADMINS:
-        return "owner"
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT role FROM bot_admins WHERE user_id = ?", (uid,)) as cur:
-            row = await cur.fetchone()
-            return row[0] if row else None
+        role = "owner"
+    else:
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT role FROM bot_admins WHERE user_id = ?", (uid,)) as cur:
+                row = await cur.fetchone()
+                role = row[0] if row else None
+    _role_cache[uid] = (now, role)
+    return role
 
 
 async def is_admin(uid: int) -> bool:
@@ -866,6 +877,7 @@ async def has_role(uid: int, min_role: str) -> bool:
 
 async def add_bot_admin(user_id: int, by: int, role: str = "helper"):
     role = role if role in ROLE_RANK else "helper"
+    _role_cache.pop(user_id, None)
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
@@ -878,6 +890,7 @@ async def add_bot_admin(user_id: int, by: int, role: str = "helper"):
 
 
 async def remove_bot_admin(user_id: int):
+    _role_cache.pop(user_id, None)
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM bot_admins WHERE user_id = ?", (user_id,))
         await db.commit()
@@ -1807,7 +1820,8 @@ def frac_choice_keyboard():
         kb.add(Text(f))
         if (i + 1) % 2 == 0:
             kb.row()
-    kb.row()
+    if len(FRACTIONS) % 2 != 0:
+        kb.row()
     kb.add(Text("❌ Отмена"), color=KeyboardButtonColor.NEGATIVE)
     return kb
 
