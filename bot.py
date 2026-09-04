@@ -32,7 +32,9 @@ WORK_COOLDOWN_SEC = 300
 REF_BONUS = 300
 SPAM_LIMIT = 6  # сообщений
 SPAM_WINDOW = 20  # секунд
-AUTO_FAKE_INTERVAL_MIN = 15  # минут между авто фейк вход/выход (0 = выкл)
+# Авто фейк вход/выход: случайный интервал (минуты). 0 = выкл
+AUTO_FAKE_MIN_MINUTES = 8
+AUTO_FAKE_MAX_MINUTES = 45
 
 NICK_RE = re.compile(r"^[A-Za-z0-9_]{3,24}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -45,6 +47,37 @@ BAN_WORDS = ["свобвк", "бесплатный вк", "накрутка", "�
 FAKE_PLAYERS = {
     "Danya_Nik": {"money": 1_250_000, "donate": 500},
     "Artem_Shpets": {"money": 980_000, "donate": 250},
+}
+
+_fake_online: set[str] = set()
+_maintenance = False
+SITE_URL = os.getenv("SITE_URL", "").strip() or "скоро"
+FORUM_URL = os.getenv("FORUM_URL", "").strip() or "скоро"
+SERVER_IP_PUBLIC = "скрыт"
+FOUNDER_ID = ENV_ADMINS[0] if ENV_ADMINS else 854071888
+FRACTION_SALARY = 800
+ONLINE_BONUS = 50
+ONLINE_BONUS_HOURS = 1
+CASHBACK_PERCENT = 5  # % при выдаче Prp Coin
+VIP_LEVELS = {
+    "bronze": {"days": 7, "price": 50, "label": "Bronze VIP"},
+    "gold": {"days": 30, "price": 150, "label": "Gold VIP"},
+    "platinum": {"days": 90, "price": 400, "label": "Platinum VIP"},
+}
+SUPPORT_TEMPLATES = {
+    "1": "Здравствуйте! Ваша заявка принята, ожидайте ответа.",
+    "2": "Опишите проблему подробнее и приложите скрин, если есть.",
+    "3": "Вопрос решён. Если останутся проблемы — создайте новый тикет.",
+    "4": "По правилам сервера это запрещено. Подробнее: кнопка «Информация».",
+    "5": "Лаунчер ещё в разработке. Следите за новостями проекта.",
+}
+
+COIN_SHOP = {
+    "VIP 7 дней": (50, "VIP на неделю"),
+    "VIP 30 дней": (150, "VIP на месяц"),
+    "Скин авто": (80, "Уникальный скин"),
+    "Игровые 5000₽": (30, "На баланс бота 5000₽"),
+    "Игровые 20000₽": (100, "На баланс бота 20000₽"),
 }
 
 # Роли: owner > mod > helper
@@ -98,6 +131,46 @@ class PromoCreateState(BaseStateGroup):
     REWARD = 2
 
 
+class EmailState(BaseStateGroup):
+    NEW = 1
+
+
+class LeaderState(BaseStateGroup):
+    FRACTION = 1
+    MOTIVE = 2
+
+
+class MarketState(BaseStateGroup):
+    TITLE = 1
+    PRICE = 2
+    PHOTO = 3
+
+
+class NewsState(BaseStateGroup):
+    TEXT = 1
+
+
+class PartnerState(BaseStateGroup):
+    TEXT = 1
+
+
+class ClanState(BaseStateGroup):
+    NAME = 1
+    TAG = 2
+
+
+class ContestState(BaseStateGroup):
+    TITLE = 1
+
+
+class AppealState(BaseStateGroup):
+    TEXT = 1
+
+
+class TwoFAState(BaseStateGroup):
+    CODE = 1
+
+
 # -------------------- utils --------------------
 def hash_password(password: str, salt: str | None = None):
     salt = salt or secrets.token_hex(16)
@@ -143,24 +216,59 @@ async def react_to(message: Message, reaction_id: int = 1):
         pass
 
 
+def apply_fake_presence(nick: str, action: str) -> None:
+    global _fake_online
+    if action == "join":
+        _fake_online.add(nick)
+    else:
+        _fake_online.discard(nick)
+
+
+def server_online_count() -> int:
+    return len(_fake_online)
+
+
+def format_server_status() -> str:
+    online = server_online_count()
+    players = ", ".join(sorted(_fake_online)) if _fake_online else "—"
+    maint = "🔧 ТЕХРАБОТЫ" if _maintenance else "✅ Работает"
+    lines = [
+        f"📡 Статус сервера {PROJECT_SHORT}",
+        "",
+        f"Состояние: {maint}",
+        f"Онлайн: {online}",
+        f"Игроки: {players}",
+        f"IP-адрес: {SERVER_IP_PUBLIC}",
+        f"Сервер: {SERVER_LABEL}",
+    ]
+    return chr(10).join(lines)
+
+
 def format_server_notify(nick: str, action: str, ip: str | None = None) -> str:
+    apply_fake_presence(nick, action)
     data = FAKE_PLAYERS.get(nick) or {
         "money": random.randint(50_000, 5_000_000),
         "donate": random.randint(0, 2000),
     }
     money = f"{data['money']:,}".replace(",", " ")
     donate = data["donate"]
-    ip = ip or f"192.168.{random.randint(0, 255)}.{random.randint(1, 254)}"
-    head = (
-        f"Ваш персонаж {nick} вошёл на сервер"
-        if action == "join"
-        else f"Ваш персонаж {nick} покинул сервер"
-    )
-    return (
-        f"{head}\nIP-адрес: {ip}\n\n"
-        f"Деньги: {money} руб.\nДонат: {donate} Prp Coin\n\n"
-        f"— Сервер: {SERVER_LABEL}"
-    )
+    if action == "join":
+        head = f"Ваш персонаж {nick} вошёл на сервер"
+    else:
+        head = f"Ваш персонаж {nick} покинул сервер"
+    online = server_online_count()
+    lines = [
+        head,
+        f"IP-адрес: {SERVER_IP_PUBLIC}",
+        "",
+        f"Деньги: {money} руб.",
+        f"Донат: {donate} Prp Coin",
+        "",
+        f"Онлайн на сервере: {online}",
+        f"— Сервер: {SERVER_LABEL}",
+    ]
+    return chr(10).join(lines)
+
 
 
 # -------------------- DB --------------------
@@ -284,6 +392,137 @@ async def init_db():
                 status TEXT DEFAULT 'new',
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                description TEXT,
+                event_at TEXT,
+                created_by INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+            
+            CREATE TABLE IF NOT EXISTS market (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                seller_id INTEGER,
+                title TEXT,
+                price INTEGER,
+                photo TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                kind TEXT,
+                amount INTEGER,
+                meta TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS pc_purchases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                item TEXT,
+                price INTEGER,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS warns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                admin_id INTEGER,
+                reason TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS wanted (
+                user_id INTEGER PRIMARY KEY,
+                nickname TEXT,
+                reason TEXT,
+                stars INTEGER DEFAULT 1,
+                by_admin INTEGER,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS appeals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                text TEXT,
+                status TEXT DEFAULT 'open',
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS news (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT,
+                author_id INTEGER,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS event_regs (
+                event_id INTEGER,
+                user_id INTEGER,
+                created_at TEXT,
+                PRIMARY KEY (event_id, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS contests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS contest_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contest_id INTEGER,
+                user_id INTEGER,
+                photo TEXT,
+                votes INTEGER DEFAULT 0,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS reputation (
+                from_id INTEGER,
+                to_id INTEGER,
+                value INTEGER,
+                created_at TEXT,
+                PRIMARY KEY (from_id, to_id)
+            );
+            CREATE TABLE IF NOT EXISTS badges (
+                user_id INTEGER,
+                badge TEXT,
+                PRIMARY KEY (user_id, badge)
+            );
+            CREATE TABLE IF NOT EXISTS partners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                text TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS clans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE,
+                tag TEXT UNIQUE,
+                leader_id INTEGER,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS clan_members (
+                clan_id INTEGER,
+                user_id INTEGER,
+                role TEXT DEFAULT 'member',
+                PRIMARY KEY (clan_id, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS leader_apps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                nickname TEXT,
+                fraction TEXT,
+                motive TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS activity_log (
+                user_id INTEGER,
+                day TEXT,
+                points INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, day)
+            );
             CREATE TABLE IF NOT EXISTS schedules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT,
@@ -298,6 +537,15 @@ async def init_db():
             ("referred_by", "ALTER TABLE players ADD COLUMN referred_by INTEGER"),
             ("referral_code", "ALTER TABLE players ADD COLUMN referral_code TEXT"),
             ("fraction", "ALTER TABLE players ADD COLUMN fraction TEXT"),
+            ("prp_coin", "ALTER TABLE players ADD COLUMN prp_coin INTEGER DEFAULT 0"),
+            ("sub_until", "ALTER TABLE players ADD COLUMN sub_until TEXT"),
+            ("last_seen", "ALTER TABLE players ADD COLUMN last_seen TEXT"),
+            ("clan_id", "ALTER TABLE players ADD COLUMN clan_id INTEGER"),
+            ("last_frac_salary", "ALTER TABLE players ADD COLUMN last_frac_salary TEXT"),
+            ("last_online_bonus", "ALTER TABLE players ADD COLUMN last_online_bonus TEXT"),
+            ("vip_until", "ALTER TABLE players ADD COLUMN vip_until TEXT"),
+            ("vip_level", "ALTER TABLE players ADD COLUMN vip_level TEXT"),
+            ("twofa", "ALTER TABLE players ADD COLUMN twofa INTEGER DEFAULT 0"),
         ]:
             try:
                 await db.execute(ddl)
@@ -307,6 +555,14 @@ async def init_db():
             await db.execute("ALTER TABLE bot_admins ADD COLUMN role TEXT DEFAULT 'helper'")
         except Exception:
             pass
+        for extra_sql in (
+            "ALTER TABLE tickets ADD COLUMN curator_id INTEGER",
+            "ALTER TABLE tickets ADD COLUMN curator_note TEXT",
+        ):
+            try:
+                await db.execute(extra_sql)
+            except Exception:
+                pass
         await db.commit()
 
 
@@ -424,9 +680,22 @@ async def resolve_player(who: str):
     return await get_player_by_nick(who)
 
 
-async def add_balance(user_id: int, amount: int):
+async def add_balance(user_id: int, amount: int, meta: str = "balance"):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE players SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        await db.commit()
+    try:
+        await log_tx(user_id, meta, amount)
+    except Exception:
+        pass
+
+
+async def add_prp_coin(user_id: int, amount: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE players SET prp_coin = COALESCE(prp_coin, 0) + ? WHERE user_id = ?",
+            (amount, user_id),
+        )
         await db.commit()
 
 
@@ -932,6 +1201,420 @@ async def mark_schedule_done(sid: int):
         await db.commit()
 
 
+
+async def add_event(title: str, description: str, event_at: str, by: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO events (title, description, event_at, created_by) VALUES (?, ?, ?, ?)",
+            (title, description, event_at, by),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def week_events():
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, title, description, event_at FROM events ORDER BY event_at LIMIT 30"
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_setting(key: str, default: str = "") -> str:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else default
+
+
+async def set_setting(key: str, value: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        await db.commit()
+
+
+
+async def log_tx(user_id: int, kind: str, amount: int, meta: str = ""):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO transactions (user_id, kind, amount, meta, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, kind, amount, meta, now_str()),
+        )
+        await db.commit()
+
+
+async def get_tx(user_id: int, limit: int = 15):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT kind, amount, meta, created_at FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def log_pc_buy(user_id: int, item: str, price: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO pc_purchases (user_id, item, price, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, item, price, now_str()),
+        )
+        await db.commit()
+
+
+async def get_pc_history(user_id: int, limit: int = 15):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT item, price, created_at FROM pc_purchases WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def add_activity(user_id: int, points: int = 1):
+    day = date.today().isoformat()
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """
+            INSERT INTO activity_log (user_id, day, points) VALUES (?, ?, ?)
+            ON CONFLICT(user_id, day) DO UPDATE SET points = points + ?
+            """,
+            (user_id, day, points, points),
+        )
+        await db.execute(
+            "UPDATE players SET last_seen = ? WHERE user_id = ?",
+            (now_str(), user_id),
+        )
+        await db.commit()
+
+
+async def week_activity_top(limit: int = 10):
+    since = (date.today() - timedelta(days=7)).isoformat()
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            """
+            SELECT p.nickname, SUM(a.points) as pts
+            FROM activity_log a JOIN players p ON p.user_id = a.user_id
+            WHERE a.day >= ?
+            GROUP BY a.user_id
+            ORDER BY pts DESC LIMIT ?
+            """,
+            (since, limit),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def set_player_field(user_id: int, field: str, value):
+    allowed = {
+        "email", "twofa", "vip_level", "vip_until", "last_online_bonus",
+        "last_frac_salary", "clan_id", "last_seen", "sub_until", "fraction",
+    }
+    if field not in allowed:
+        return
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(f"UPDATE players SET {field} = ? WHERE user_id = ?", (value, user_id))
+        await db.commit()
+
+
+async def grant_vip(user_id: int, level: str, days: int | None = None):
+    info = VIP_LEVELS.get(level, {"days": days or 7, "label": level})
+    d = days if days is not None else info["days"]
+    player = await get_player(user_id)
+    now = datetime.now()
+    start = now
+    if player and player.get("vip_until"):
+        try:
+            prev = datetime.fromisoformat(player["vip_until"])
+            if prev > now:
+                start = prev
+        except Exception:
+            pass
+    until = start + timedelta(days=d)
+    await set_player_field(user_id, "vip_level", level)
+    await set_player_field(user_id, "vip_until", until.isoformat())
+    await badge_add(user_id, f"VIP:{level}")
+
+
+async def badge_add(user_id: int, badge: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        try:
+            await db.execute(
+                "INSERT INTO badges (user_id, badge) VALUES (?, ?)", (user_id, badge)
+            )
+            await db.commit()
+        except Exception:
+            pass
+
+
+async def badges_list(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT badge FROM badges WHERE user_id = ?", (user_id,)) as cur:
+            return [r[0] for r in await cur.fetchall()]
+
+
+async def rep_value(user_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT COALESCE(SUM(value),0) FROM reputation WHERE to_id = ?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0] if row else 0)
+
+
+async def rep_set(from_id: int, to_id: int, value: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """
+            INSERT INTO reputation (from_id, to_id, value, created_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(from_id, to_id) DO UPDATE SET value = excluded.value, created_at = excluded.created_at
+            """,
+            (from_id, to_id, value, now_str()),
+        )
+        await db.commit()
+
+
+async def add_warn(user_id: int, admin_id: int, reason: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO warns (user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, admin_id, reason, now_str()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def count_warns(user_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT COUNT(*) FROM warns WHERE user_id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return int(row[0] if row else 0)
+
+
+async def list_warns(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT reason, created_at FROM warns WHERE user_id = ? ORDER BY id DESC LIMIT 10",
+            (user_id,),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def set_wanted(user_id: int, nick: str, reason: str, stars: int, admin_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """
+            INSERT INTO wanted (user_id, nickname, reason, stars, by_admin, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET reason=excluded.reason, stars=excluded.stars, created_at=excluded.created_at
+            """,
+            (user_id, nick, reason, stars, admin_id, now_str()),
+        )
+        await db.commit()
+
+
+async def clear_wanted(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM wanted WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+
+async def list_wanted():
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT user_id, nickname, reason, stars FROM wanted ORDER BY stars DESC"
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def add_news(text: str, author_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO news (text, author_id, created_at) VALUES (?, ?, ?)",
+            (text, author_id, now_str()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def last_news(limit: int = 5):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, text, created_at FROM news ORDER BY id DESC LIMIT ?", (limit,)
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def market_add(seller_id: int, title: str, price: int, photo: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO market (seller_id, title, price, photo, created_at) VALUES (?, ?, ?, ?, ?)",
+            (seller_id, title, price, photo, now_str()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def market_list(limit: int = 15):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, seller_id, title, price, photo FROM market WHERE active = 1 ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def market_get(mid: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM market WHERE id = ?", (mid,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def market_close(mid: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE market SET active = 0 WHERE id = ?", (mid,))
+        await db.commit()
+
+
+async def leader_app_add(user_id: int, nick: str, fraction: str, motive: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO leader_apps (user_id, nickname, fraction, motive, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, nick, fraction, motive, now_str()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def leader_apps_list(status: str = "pending"):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, user_id, nickname, fraction, motive, created_at FROM leader_apps WHERE status = ? ORDER BY id DESC",
+            (status,),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def leader_app_set(aid: int, status: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE leader_apps SET status = ? WHERE id = ?", (status, aid))
+        await db.commit()
+
+
+async def register_event(event_id: int, user_id: int) -> bool:
+    async with aiosqlite.connect(DB_NAME) as db:
+        try:
+            await db.execute(
+                "INSERT INTO event_regs (event_id, user_id, created_at) VALUES (?, ?, ?)",
+                (event_id, user_id, now_str()),
+            )
+            await db.commit()
+            return True
+        except Exception:
+            return False
+
+
+async def event_reg_count(event_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM event_regs WHERE event_id = ?", (event_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0] if row else 0)
+
+
+async def partner_add(user_id: int, text: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO partners (user_id, text, created_at) VALUES (?, ?, ?)",
+            (user_id, text, now_str()),
+        )
+        await db.commit()
+
+
+async def partners_list(limit: int = 15):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, user_id, text, created_at FROM partners WHERE active = 1 ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def clan_create(name: str, tag: str, leader_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO clans (name, tag, leader_id, created_at) VALUES (?, ?, ?, ?)",
+            (name, tag, leader_id, now_str()),
+        )
+        cid = cur.lastrowid
+        await db.execute(
+            "INSERT INTO clan_members (clan_id, user_id, role) VALUES (?, ?, 'leader')",
+            (cid, leader_id),
+        )
+        await db.execute("UPDATE players SET clan_id = ? WHERE user_id = ?", (cid, leader_id))
+        await db.commit()
+        return cid
+
+
+async def clan_by_user(user_id: int):
+    player = await get_player(user_id)
+    if not player or not player.get("clan_id"):
+        return None
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM clans WHERE id = ?", (player["clan_id"],)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def set_ticket_curator(tid: int, curator_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE tickets SET curator_id = ? WHERE id = ?", (curator_id, tid))
+        await db.commit()
+
+
+async def appeal_add(user_id: int, text: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO appeals (user_id, text, created_at) VALUES (?, ?, ?)",
+            (user_id, text, now_str()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def appeals_list(status: str = "open"):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, user_id, text, created_at FROM appeals WHERE status = ? ORDER BY id DESC",
+            (status,),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def contest_create(title: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO contests (title, created_at) VALUES (?, ?)", (title, now_str())
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def active_contest():
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM contests WHERE active = 1 ORDER BY id DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
 SHOP = {
     "Аптечка": (300, "HP в RP"),
     "Бронежилет": (800, "Защита"),
@@ -949,6 +1632,10 @@ async def require_player(message: Message):
     if player.get("banned") and not await is_admin(message.from_id):
         await message.answer("⛔ Аккаунт заблокирован.")
         return None
+    try:
+        await add_activity(message.from_id, 1)
+    except Exception:
+        pass
     return player
 
 
@@ -984,8 +1671,34 @@ async def main_menu(user_id: int):
         kb.row()
         kb.add(Text("🎁 Промокод"), color=KeyboardButtonColor.POSITIVE)
         kb.add(Text("👥 Рефералка"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("💎 Prp Coin"), color=KeyboardButtonColor.PRIMARY)
+        kb.add(Text("📅 Ивенты"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("🏪 Биржа"), color=KeyboardButtonColor.PRIMARY)
+        kb.add(Text("📰 Новости"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("👑 Лидерство"), color=KeyboardButtonColor.PRIMARY)
+        kb.add(Text("⚖️ Апелляция"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("🔫 Розыск"), color=KeyboardButtonColor.NEGATIVE)
+        kb.add(Text("🤝 Напарник"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("🛡️ Клан"), color=KeyboardButtonColor.PRIMARY)
+        kb.add(Text("📸 Конкурс"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("📊 Активность"), color=KeyboardButtonColor.SECONDARY)
+        kb.add(Text("📜 История"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("⭐ Репутация"), color=KeyboardButtonColor.SECONDARY)
+        kb.add(Text("📧 Сменить email"), color=KeyboardButtonColor.SECONDARY)
+        kb.row()
+        kb.add(Text("🔐 2FA"), color=KeyboardButtonColor.SECONDARY)
+        kb.add(Text("📡 Статус сервера"), color=KeyboardButtonColor.PRIMARY)
     kb.row()
     kb.add(Text("ℹ️ Информация"), color=KeyboardButtonColor.SECONDARY)
+    kb.row()
+    kb.add(Text("📞 Связь с основателем"), color=KeyboardButtonColor.PRIMARY)
     if admin:
         kb.row()
         kb.add(Text("🛠️ Админ-панель"), color=KeyboardButtonColor.NEGATIVE)
@@ -1015,7 +1728,13 @@ def admin_keyboard(show_fake: bool = False):
         .add(Text("🎫 Тикеты"), color=KeyboardButtonColor.PRIMARY)
         .row()
         .add(Text("🏛️ Заявки фракций"), color=KeyboardButtonColor.PRIMARY)
+        .add(Text("👑 Лидерки"), color=KeyboardButtonColor.PRIMARY)
+        .row()
         .add(Text("🚨 Жалобы"), color=KeyboardButtonColor.NEGATIVE)
+        .add(Text("⚖️ Апелляции"), color=KeyboardButtonColor.SECONDARY)
+        .row()
+        .add(Text("📰 Пост новости"), color=KeyboardButtonColor.PRIMARY)
+        .add(Text("🔫 Розыск админ"), color=KeyboardButtonColor.NEGATIVE)
         .row()
         .add(Text("💡 Идеи"), color=KeyboardButtonColor.PRIMARY)
         .add(Text("🗳️ Голосования админ"), color=KeyboardButtonColor.PRIMARY)
@@ -1304,6 +2023,7 @@ async def cabinet(message: Message):
         f"Фракция: {player.get('fraction') or 'нет'}\n"
         f"Уровень: {player['level']} ({player['exp']}/{player['level'] * 1000})\n"
         f"Баланс: {player['balance']}₽\n"
+        f"Prp Coin: {player.get('prp_coin') or 0}\n"
         f"Реф.код: {player.get('referral_code') or '—'}\n"
         f"Регистрация: {player['registered_at']}",
         keyboard=await main_menu(message.from_id),
@@ -1749,6 +2469,587 @@ async def recover_finish(message: Message):
 
 
 # ----- admin UI -----
+
+@bot.on.message(text=["📡 Статус сервера", "Статус сервера", "статус", "онлайн", "сервер"])
+async def server_status(message: Message):
+    await message.answer(format_server_status())
+
+
+@bot.on.message(text=["💎 Prp Coin", "Prp Coin", "prp coin", "донат магазин"])
+async def coin_shop(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    coins = player.get("prp_coin") or 0
+    lines = [f"💎 Магазин Prp Coin\nБаланс: {coins} Prp Coin\n"]
+    kb = Keyboard(inline=True)
+    for name, (price, desc) in COIN_SHOP.items():
+        lines.append(f"• {name} — {price} PC — {desc}")
+        kb.add(Text(f"{name} ({price} PC)", payload={"cmd": "buycoin", "item": name}))
+        kb.row()
+    lines.append("\nPC выдаёт администрация (выдатьcoin).")
+    await message.answer("\n".join(lines), keyboard=kb)
+
+
+@bot.on.message(PayloadRule({"cmd": "buycoin"}))
+async def buy_coin_item(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    item = (message.get_payload_json() or {}).get("item")
+    if item not in COIN_SHOP:
+        return
+    price, desc = COIN_SHOP[item]
+    coins = player.get("prp_coin") or 0
+    if coins < price:
+        await message.answer(f"❌ Нужно {price} Prp Coin (у вас {coins})")
+        return
+    await add_prp_coin(message.from_id, -price)
+    if "5000" in item:
+        await add_balance(message.from_id, 5000)
+    elif "20000" in item:
+        await add_balance(message.from_id, 20000)
+    await inv_add(message.from_id, item, 1)
+    await log_pc_buy(message.from_id, item, price)
+    await message.answer(f"✅ Куплено за {price} Prp Coin: {item}\n{desc}")
+    await notify_admins(
+        message.ctx_api,
+        f"💎 [id{message.from_id}|{player['nickname']}] купил {item} за {price} PC",
+    )
+
+
+@bot.on.message(text=["📅 Ивенты", "Ивенты", "ивенты", "календарь"])
+async def events_list(message: Message):
+    rows = await week_events()
+    if not rows:
+        await message.answer("📅 Пока нет ивентов. Следи за новостями!")
+        return
+    lines = ["📅 Ивенты проекта:\n"]
+    for eid, title, desc, event_at in rows:
+        lines.append(f"• #{eid} [{event_at}] {title}\n  {desc}")
+    await message.answer("\n".join(lines))
+
+
+
+@bot.on.message(text=["📞 Связь с основателем", "Связь с основателем", "основатель"])
+async def contact_founder(message: Message):
+    await message.answer(
+        f"📞 Связь с основателем проекта\n"
+        f"Напишите: https://vk.com/id{FOUNDER_ID}\n"
+        f"Или создайте 🎫 Тикет в боте — куратор ответит."
+    )
+
+
+@bot.on.message(text=["📰 Новости", "Новости", "новости"])
+async def news_list(message: Message):
+    rows = await last_news(8)
+    if not rows:
+        await message.answer("📰 Новостей пока нет.")
+        return
+    lines = ["📰 Новости сервера:\n"]
+    for nid, body, created in rows:
+        lines.append(f"• #{nid} ({created})\n{body}\n")
+    await message.answer("\n".join(lines)[:3500])
+
+
+@bot.on.message(text=["📜 История", "История", "история", "транзакции"])
+async def tx_history(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    rows = await get_tx(message.from_id, 15)
+    pc = await get_pc_history(message.from_id, 10)
+    lines = ["📜 История операций:\n"]
+    if not rows:
+        lines.append("• пусто")
+    else:
+        for kind, amount, meta, created in rows:
+            sign = "+" if amount >= 0 else ""
+            lines.append(f"• [{created}] {kind}: {sign}{amount} ({meta or '—'})")
+    lines.append("\n💎 Покупки Prp Coin:")
+    if not pc:
+        lines.append("• пусто")
+    else:
+        for item, price, created in pc:
+            lines.append(f"• [{created}] {item} — {price} PC")
+    await message.answer("\n".join(lines)[:3500])
+
+
+@bot.on.message(text=["📊 Активность", "Активность", "активность"])
+async def activity_top(message: Message):
+    rows = await week_activity_top(10)
+    if not rows:
+        await message.answer("📊 Пока нет данных за неделю.")
+        return
+    lines = ["📊 Топ активности за 7 дней:\n"]
+    for i, (nick, pts) in enumerate(rows, 1):
+        lines.append(f"{i}. {nick} — {pts} очков")
+    await message.answer("\n".join(lines))
+
+
+@bot.on.message(text=["🔫 Розыск", "Розыск", "розыск", "wanted"])
+async def wanted_public(message: Message):
+    rows = await list_wanted()
+    if not rows:
+        await message.answer("🔫 Розыск пуст. Город спокоен.")
+        return
+    lines = ["🔫 Список розыска:\n"]
+    for uid, nick, reason, stars in rows:
+        lines.append(f"{'⭐' * min(stars, 5)} {nick} — {reason}")
+    await message.answer("\n".join(lines))
+
+
+@bot.on.message(text=["🏪 Биржа", "Биржа", "биржа", "маркет"])
+async def market_menu(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    rows = await market_list(12)
+    kb = Keyboard(one_time=False)
+    kb.add(Text("➕ Продать на бирже"), color=KeyboardButtonColor.POSITIVE)
+    kb.row()
+    kb.add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
+    if not rows:
+        await message.answer("🏪 Биржа пуста. Выставь товар кнопкой «Продать».", keyboard=kb)
+        return
+    await message.answer("🏪 Биржа (лоты):", keyboard=kb)
+    for mid, seller_id, title, price, photo in rows:
+        body = f"#{mid} {title}\n💰 {price}₽\nПродавец: id{seller_id}"
+        kb_buy = Keyboard(inline=True).add(
+            Text(f"Купить #{mid}", payload={"cmd": "mbuy", "id": mid}),
+            color=KeyboardButtonColor.POSITIVE,
+        )
+        try:
+            if photo:
+                await message.answer(body, attachment=photo, keyboard=kb_buy)
+            else:
+                await message.answer(body, keyboard=kb_buy)
+        except Exception:
+            await message.answer(body + (f"\n🖼 {photo}" if photo else ""), keyboard=kb_buy)
+
+
+@bot.on.message(text=["➕ Продать на бирже", "Продать на бирже"])
+async def market_sell_start(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    await message.answer("Название товара:", keyboard=cancel_keyboard())
+    await state_dispenser.set(message.peer_id, MarketState.TITLE)
+
+
+@bot.on.message(state=MarketState.TITLE)
+async def market_title(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    title = (message.text or "").strip()[:80]
+    await state_dispenser.set(message.peer_id, MarketState.PRICE, title=title)
+    await message.answer("Цена в ₽ (число):", keyboard=cancel_keyboard())
+
+
+@bot.on.message(state=MarketState.PRICE)
+async def market_price(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    if not (message.text or "").isdigit() or int(message.text) <= 0:
+        await message.answer("Введи число > 0")
+        return
+    payload = dict(message.state_peer.payload or {})
+    payload["price"] = int(message.text)
+    await state_dispenser.set(message.peer_id, MarketState.PHOTO, **payload)
+    await message.answer(
+        "Пришли фото товара (картинкой) или «-» без фото:",
+        keyboard=cancel_keyboard(),
+    )
+
+
+@bot.on.message(state=MarketState.PHOTO)
+async def market_photo(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    payload = dict(message.state_peer.payload or {})
+    photo = ""
+    # VK attachments
+    try:
+        atts = message.attachments or []
+        for a in atts:
+            if getattr(a, "photo", None):
+                sizes = a.photo.sizes
+                if sizes:
+                    photo = sorted(sizes, key=lambda s: s.width * s.height)[-1].url
+                # better: use attachment string photo-owner_id_id
+                ph = a.photo
+                photo = f"photo{ph.owner_id}_{ph.id}"
+                if getattr(ph, "access_key", None):
+                    photo += f"_{ph.access_key}"
+                break
+    except Exception:
+        pass
+    if (message.text or "").strip() == "-":
+        photo = ""
+    mid = await market_add(message.from_id, payload.get("title", "Товар"), int(payload.get("price", 0)), photo)
+    await state_dispenser.delete(message.peer_id)
+    await message.answer(f"✅ Лот #{mid} на бирже!", keyboard=await main_menu(message.from_id))
+
+
+@bot.on.message(PayloadRule({"cmd": "mbuy"}))
+async def market_buy(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    mid = int((message.get_payload_json() or {}).get("id", 0))
+    lot = await market_get(mid)
+    if not lot or not lot["active"]:
+        await message.answer("Лот недоступен")
+        return
+    if lot["seller_id"] == message.from_id:
+        await message.answer("Нельзя купить свой лот")
+        return
+    if player["balance"] < lot["price"]:
+        await message.answer("Недостаточно ₽")
+        return
+    await add_balance(message.from_id, -lot["price"], "market_buy")
+    await add_balance(lot["seller_id"], lot["price"], "market_sell")
+    await market_close(mid)
+    await message.answer(f"✅ Куплено: {lot['title']} за {lot['price']}₽")
+    await notify_user(
+        message.ctx_api, lot["seller_id"],
+        f"🏪 Ваш лот #{mid} «{lot['title']}» куплен за {lot['price']}₽",
+    )
+
+
+@bot.on.message(text=["👑 Лидерство", "Лидерство", "лидерство", "лидерка"])
+async def leader_start(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    await message.answer(
+        "👑 Заявка на лидерство фракции\nВыбери фракцию:",
+        keyboard=frac_choice_keyboard(),
+    )
+    await state_dispenser.set(message.peer_id, LeaderState.FRACTION)
+
+
+@bot.on.message(state=LeaderState.FRACTION)
+async def leader_frac(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    if message.text not in FRACTIONS:
+        await message.answer("Выбери фракцию кнопкой:", keyboard=frac_choice_keyboard())
+        return
+    await state_dispenser.set(message.peer_id, LeaderState.MOTIVE, fraction=message.text)
+    await message.answer(
+        "Опыт RP, почему ты, планы на фракцию:",
+        keyboard=cancel_keyboard(),
+    )
+
+
+@bot.on.message(state=LeaderState.MOTIVE)
+async def leader_motive(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    motive = (message.text or "").strip()
+    if len(motive) < 15:
+        await message.answer("Напиши подробнее (от 15 символов):")
+        return
+    player = await get_player(message.from_id)
+    frac = (message.state_peer.payload or {}).get("fraction")
+    aid = await leader_app_add(message.from_id, player["nickname"], frac, motive)
+    await state_dispenser.delete(message.peer_id)
+    await message.answer(f"✅ Заявка на лидерство #{aid} отправлена!", keyboard=await main_menu(message.from_id))
+    await notify_admins(
+        message.ctx_api,
+        f"👑 Лидерство #{aid}\n[id{message.from_id}|{player['nickname']}] → {frac}\n{motive}",
+    )
+
+
+@bot.on.message(text=["⚖️ Апелляция", "Апелляция", "апелляция", "суд"])
+async def appeal_start(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    await message.answer("⚖️ Опиши ситуацию для апелляции/суда:", keyboard=cancel_keyboard())
+    await state_dispenser.set(message.peer_id, AppealState.TEXT)
+
+
+@bot.on.message(state=AppealState.TEXT)
+async def appeal_save(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    text_a = (message.text or "").strip()
+    if len(text_a) < 10:
+        await message.answer("Подробнее:")
+        return
+    aid = await appeal_add(message.from_id, text_a)
+    await state_dispenser.delete(message.peer_id)
+    await message.answer(f"✅ Апелляция #{aid} принята.", keyboard=await main_menu(message.from_id))
+    await notify_admins(message.ctx_api, f"⚖️ Апелляция #{aid} от [id{message.from_id}|user]\n{text_a}")
+
+
+@bot.on.message(text=["🤝 Напарник", "Напарник", "напарник", "ищу напарника"])
+async def partner_menu(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    rows = await partners_list(12)
+    kb = (
+        Keyboard(one_time=False)
+        .add(Text("➕ Я ищу напарника"), color=KeyboardButtonColor.POSITIVE)
+        .row()
+        .add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
+    )
+    lines = ["🤝 Доска «ищу напарника»:\n"]
+    if not rows:
+        lines.append("Пока пусто. Нажми «Я ищу напарника».")
+    else:
+        for pid, uid, body, created in rows:
+            lines.append(f"• [id{uid}|игрок] ({created}): {body}")
+    await message.answer("\n".join(lines)[:3500], keyboard=kb)
+
+
+@bot.on.message(text=["➕ Я ищу напарника", "Я ищу напарника"])
+async def partner_start(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    await message.answer("Что ищешь? (режим, время, фракция):", keyboard=cancel_keyboard())
+    await state_dispenser.set(message.peer_id, PartnerState.TEXT)
+
+
+@bot.on.message(state=PartnerState.TEXT)
+async def partner_save(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    body = (message.text or "").strip()
+    if len(body) < 5:
+        await message.answer("Коротко слишком:")
+        return
+    await partner_add(message.from_id, body)
+    await state_dispenser.delete(message.peer_id)
+    await message.answer("✅ Анкета размещена!", keyboard=await main_menu(message.from_id))
+
+
+@bot.on.message(text=["🛡️ Клан", "Клан", "клан"])
+async def clan_menu(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    clan = await clan_by_user(message.from_id)
+    if clan:
+        await message.answer(
+            f"🛡️ Клан [{clan['tag']}] {clan['name']}\n"
+            f"Лидер: id{clan['leader_id']}\n"
+            f"Создан: {clan['created_at']}"
+        )
+        return
+    await message.answer(
+        "Ты не в клане. Создать: напиши\n"
+        "клансоздать Название | ТЕГ\n"
+        "Пример: клансоздать Night Wolves | NW"
+    )
+
+
+@bot.on.message(text=["📸 Конкурс", "Конкурс", "конкурс"])
+async def contest_menu(message: Message):
+    c = await active_contest()
+    if not c:
+        await message.answer("📸 Активного конкурса скринов нет.")
+        return
+    await message.answer(
+        f"📸 Конкурс: {c['title']}\n"
+        f"Пришли фото с подписью: конкурс фото\n"
+        f"(или прикрепи картинку и напиши «конкурс фото»)"
+    )
+
+
+@bot.on.message(text=["📅 Запись на ивент", "запись на ивент"])
+async def event_reg_help(message: Message):
+    await message.answer("Запись: `ивентзапись ID`\nСписок ивентов — кнопка «📅 Ивенты»")
+
+
+@bot.on.message(text=["🔐 2FA", "2FA", "2fa"])
+async def twofa_toggle(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    cur = int(player.get("twofa") or 0)
+    new = 0 if cur else 1
+    await set_player_field(message.from_id, "twofa", new)
+    await message.answer(
+        "🔐 2FA " + ("ВКЛ. Код будет приходить при смене пароля/email." if new else "ВЫКЛ.")
+    )
+
+
+@bot.on.message(text=["📧 Сменить email", "Сменить email", "сменить email"])
+async def email_start(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    await message.answer(f"Текущий: {player.get('email')}\nВведи новый email:", keyboard=cancel_keyboard())
+    await state_dispenser.set(message.peer_id, EmailState.NEW)
+
+
+@bot.on.message(state=EmailState.NEW)
+async def email_save(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    email = (message.text or "").strip()
+    if not EMAIL_RE.match(email):
+        await message.answer("Некорректный email")
+        return
+    await set_player_field(message.from_id, "email", email)
+    await state_dispenser.delete(message.peer_id)
+    await message.answer(f"✅ Email изменён: {email}", keyboard=await main_menu(message.from_id))
+
+
+@bot.on.message(text=["⭐ Репутация", "Репутация", "репутация"])
+async def rep_self(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    val = await rep_value(message.from_id)
+    badges = await badges_list(message.from_id)
+    b = ", ".join(badges) if badges else "—"
+    vip = player.get("vip_level") or "нет"
+    vu = player.get("vip_until") or "—"
+    await message.answer(
+        f"⭐ Репутация: {val}\n"
+        f"Значки: {b}\n"
+        f"VIP: {vip} до {vu}\n"
+        f"Поставить игроку: реп Ник +1  или  реп Ник -1"
+    )
+
+
+
+@bot.on.message(text=["👑 Лидерки", "Лидерки"])
+async def leader_apps_admin(message: Message):
+    if not await has_role(message.from_id, "helper"):
+        return
+    rows = await leader_apps_list("pending")
+    if not rows:
+        await message.answer("Нет заявок на лидерство.")
+        return
+    for aid, uid, nick, frac, motive, created in rows:
+        kb = (
+            Keyboard(inline=True)
+            .add(Text("✅ Лидер", payload={"cmd": "lead_ok", "id": aid}), color=KeyboardButtonColor.POSITIVE)
+            .add(Text("❌", payload={"cmd": "lead_no", "id": aid}), color=KeyboardButtonColor.NEGATIVE)
+        )
+        await message.answer(
+            f"👑 #{aid} [id{uid}|{nick}] → {frac}\n{motive}\n({created})",
+            keyboard=kb,
+        )
+
+
+@bot.on.message(PayloadRule({"cmd": "lead_ok"}))
+async def lead_ok(message: Message):
+    if not await has_role(message.from_id, "mod"):
+        return
+    aid = int((message.get_payload_json() or {})["id"])
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM leader_apps WHERE id = ?", (aid,)) as cur:
+            app = await cur.fetchone()
+            app = dict(app) if app else None
+    if not app:
+        return
+    await leader_app_set(aid, "approved")
+    await set_fraction(app["user_id"], app["fraction"])
+    await badge_add(app["user_id"], f"Лидер:{app['fraction']}")
+    await admin_log(message.from_id, "leader_ok", app["nickname"], app["fraction"])
+    await message.answer(f"✅ {app['nickname']} — лидер {app['fraction']}")
+    await notify_user(
+        message.ctx_api, app["user_id"],
+        f"👑 Поздравляем! Вы назначены лидером фракции «{app['fraction']}»!",
+    )
+
+
+@bot.on.message(PayloadRule({"cmd": "lead_no"}))
+async def lead_no(message: Message):
+    if not await has_role(message.from_id, "helper"):
+        return
+    aid = int((message.get_payload_json() or {})["id"])
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM leader_apps WHERE id = ?", (aid,)) as cur:
+            app = await cur.fetchone()
+            app = dict(app) if app else None
+    if not app:
+        return
+    await leader_app_set(aid, "rejected")
+    await message.answer(f"❌ Отказ #{aid}")
+    await notify_user(message.ctx_api, app["user_id"], "👑 Заявка на лидерство отклонена.")
+
+
+@bot.on.message(text=["⚖️ Апелляции", "Апелляции"])
+async def appeals_admin(message: Message):
+    if not await has_role(message.from_id, "helper"):
+        return
+    rows = await appeals_list("open")
+    if not rows:
+        await message.answer("Апелляций нет.")
+        return
+    for aid, uid, body, created in rows:
+        await message.answer(
+            f"⚖️ #{aid} [id{uid}|user] ({created})\n{body}\nзакрытьапелляцию {aid}"
+        )
+
+
+@bot.on.message(text=["📰 Пост новости", "Пост новости"])
+async def news_post_start(message: Message):
+    if not await has_role(message.from_id, "mod"):
+        return
+    await message.answer("Текст новости:", keyboard=cancel_keyboard())
+    await state_dispenser.set(message.peer_id, NewsState.TEXT)
+
+
+@bot.on.message(state=NewsState.TEXT)
+async def news_post_save(message: Message):
+    if not await is_admin(message.from_id):
+        return
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=admin_keyboard(await is_owner(message.from_id)))
+        return
+    body = (message.text or "").strip()
+    if len(body) < 5:
+        await message.answer("Коротко:")
+        return
+    nid = await add_news(body, message.from_id)
+    await state_dispenser.delete(message.peer_id)
+    await message.answer(f"✅ Новость #{nid} опубликована")
+    # notify players
+    for user_id, nick, status, level, balance, banned, email in await get_all_players():
+        if not banned:
+            await notify_user(message.ctx_api, user_id, f"📰 Новость #{nid}:\n{body}")
+
+
+@bot.on.message(text=["🔫 Розыск админ", "Розыск админ"])
+async def wanted_admin_help(message: Message):
+    if not await is_admin(message.from_id):
+        return
+    await message.answer(
+        "розыск Ник причина 3\n"
+        "снятьрозыск Ник\n"
+        "Список: кнопка «Розыск» у игроков"
+    )
+
+
 @bot.on.message(text=["🛠️ Админ-панель", "Админ-панель", "админка", "Админка"])
 async def admin_panel(message: Message):
     if not await is_admin(message.from_id):
@@ -2040,6 +3341,17 @@ async def text_commands(message: Message):
     if await check_autoban(message):
         return
 
+    global _maintenance
+    if _maintenance and not await is_admin(message.from_id):
+        t = message.text or ""
+        allow = any(x in t for x in (
+            "Статус", "статус", "Информация", "инфо", "меню", "Меню",
+            "Начать", "начать", "онлайн", "сервер",
+        ))
+        if not allow:
+            await message.answer("🔧 Сервер на технических работах. Зайти сейчас нельзя. Смотри «📡 Статус сервера».")
+            return
+
     low = text.lower()
     uid = message.from_id
     api = message.ctx_api
@@ -2080,10 +3392,392 @@ async def text_commands(message: Message):
         await notify_user(api, target["user_id"], f"+{amount}₽ от {player['nickname']}")
         return
 
+
+    if low.startswith("реп "):
+        player = await require_player(message)
+        if not player:
+            return
+        parts = text.split()
+        if len(parts) < 3 or parts[-1] not in ("+1", "-1", "+1", "1", "-1"):
+            await message.answer("реп Ник +1  или  реп Ник -1")
+            return
+        val = 1 if parts[-1].startswith("+") or parts[-1] == "1" else -1
+        if parts[-1] == "-1" or parts[-1].startswith("-"):
+            val = -1
+        target = await resolve_player(" ".join(parts[1:-1]))
+        if not target or target["user_id"] == uid:
+            await message.answer("Нельзя")
+            return
+        await rep_set(uid, target["user_id"], val)
+        await message.answer(f"⭐ Репутация {target['nickname']}: {val:+d}")
+        return
+
+    if low.startswith("ивентзапись ") and text.split()[-1].isdigit():
+        player = await require_player(message)
+        if not player:
+            return
+        eid = int(text.split()[-1])
+        ok = await register_event(eid, uid)
+        if ok:
+            cnt = await event_reg_count(eid)
+            await message.answer(f"✅ Запись на ивент #{eid}. Участников: {cnt}")
+        else:
+            await message.answer("Уже записан или ошибка")
+        return
+
+    if low.startswith("клансоздать "):
+        player = await require_player(message)
+        if not player:
+            return
+        if player.get("clan_id"):
+            await message.answer("Ты уже в клане")
+            return
+        body = text[len("клансоздать "):]
+        if "|" not in body:
+            await message.answer("клансоздать Название | ТЕГ")
+            return
+        name, tag = [x.strip() for x in body.split("|", 1)]
+        if len(tag) > 5 or len(name) < 3:
+            await message.answer("ТЕГ до 5 символов, название от 3")
+            return
+        try:
+            cid = await clan_create(name, tag.upper(), uid)
+            await badge_add(uid, f"Клан:{tag.upper()}")
+            await message.answer(f"🛡️ Клан [{tag.upper()}] {name} создан! ID {cid}")
+        except Exception:
+            await message.answer("Имя или тег заняты")
+        return
+
+    if low == "конкурс фото" or low.startswith("конкурс фото"):
+        player = await require_player(message)
+        if not player:
+            return
+        c = await active_contest()
+        if not c:
+            await message.answer("Нет активного конкурса")
+            return
+        photo = ""
+        try:
+            for a in (message.attachments or []):
+                if getattr(a, "photo", None):
+                    ph = a.photo
+                    photo = f"photo{ph.owner_id}_{ph.id}"
+                    if getattr(ph, "access_key", None):
+                        photo += f"_{ph.access_key}"
+                    break
+        except Exception:
+            pass
+        if not photo:
+            await message.answer("Прикрепи фото к сообщению")
+            return
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT INTO contest_entries (contest_id, user_id, photo, created_at) VALUES (?, ?, ?, ?)",
+                (c["id"], uid, photo, now_str()),
+            )
+            await db.commit()
+        await message.answer("✅ Работа отправлена на конкурс!")
+        return
+
+
     if not await is_admin(uid):
         return
 
+
+    if low.startswith("штраф "):
+        parts = text.split()
+        if len(parts) < 3 or not parts[-1].isdigit():
+            await message.answer("штраф Ник 500 [причина]")
+            return
+        amount = int(parts[-1]) if parts[-1].isdigit() else int(parts[2])
+        # parse: штраф nick amount reason
+        if not parts[-1].isdigit():
+            await message.answer("штраф Ник 500 причина")
+            return
+        # find amount position
+        amount = None
+        for i, p in enumerate(parts):
+            if i > 0 and p.isdigit():
+                amount = int(p)
+                nick = " ".join(parts[1:i])
+                reason = " ".join(parts[i+1:]) or "штраф"
+                break
+        if amount is None:
+            await message.answer("штраф Ник 500 причина")
+            return
+        target = await resolve_player(nick)
+        if not target:
+            await message.answer("Не найден")
+            return
+        await add_balance(target["user_id"], -amount, "fine")
+        await admin_log(uid, "fine", target["nickname"], f"{amount} {reason}")
+        await message.answer(f"💸 Штраф {amount}₽ → {target['nickname']}")
+        await notify_user(api, target["user_id"], f"💸 Штраф {amount}₽\nПричина: {reason}")
+        return
+
+    if low.startswith("варн ") or low.startswith("пред "):
+        # keep pred existing; enhance warn table on "варн"
+        if low.startswith("варн "):
+            parts = text.split(maxsplit=2)
+            if len(parts) < 3:
+                await message.answer("варн Ник причина")
+                return
+            target = await resolve_player(parts[1])
+            if not target:
+                await message.answer("Не найден")
+                return
+            await add_warn(target["user_id"], uid, parts[2])
+            n = await count_warns(target["user_id"])
+            await admin_log(uid, "warn", target["nickname"], parts[2])
+            await message.answer(f"⚠️ Варн #{n} → {target['nickname']}")
+            await notify_user(api, target["user_id"], f"⚠️ Варн ({n}): {parts[2]}")
+            return
+
+    if low.startswith("уволить "):
+        target = await resolve_player(text[8:].strip())
+        if not target:
+            await message.answer("Не найден")
+            return
+        await set_fraction(target["user_id"], None)
+        await admin_log(uid, "fire", target["nickname"])
+        await message.answer(f"Уволен из фракции: {target['nickname']}")
+        await notify_user(api, target["user_id"], "Вас уволили из фракции.")
+        return
+
+    if low.startswith("розыск "):
+        parts = text.split()
+        # розыск Nick reason stars
+        if len(parts) < 4 or not parts[-1].isdigit():
+            await message.answer("розыск Ник причина 3")
+            return
+        stars = int(parts[-1])
+        nick = parts[1]
+        reason = " ".join(parts[2:-1])
+        target = await resolve_player(nick)
+        if not target:
+            await message.answer("Не найден")
+            return
+        await set_wanted(target["user_id"], target["nickname"], reason, stars, uid)
+        await admin_log(uid, "wanted", target["nickname"], reason)
+        await message.answer(f"🔫 В розыск: {target['nickname']} ({stars}★)")
+        return
+
+    if low.startswith("снятьрозыск "):
+        target = await resolve_player(text[12:].strip())
+        if not target:
+            await message.answer("Не найден")
+            return
+        await clear_wanted(target["user_id"])
+        await message.answer(f"Розыск снят: {target['nickname']}")
+        return
+
+    if low.startswith("закрытьапелляцию ") and text.split()[-1].isdigit():
+        aid = int(text.split()[-1])
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute("UPDATE appeals SET status = 'closed' WHERE id = ?", (aid,))
+            await db.commit()
+        await message.answer(f"Апелляция #{aid} закрыта")
+        return
+
+    if low.startswith("куратор "):
+        parts = text.split()
+        if len(parts) < 3 or not parts[1].isdigit():
+            await message.answer("куратор ID_тикета idVK")
+            return
+        tid = int(parts[1])
+        cid = int(parts[2][2:]) if parts[2].lower().startswith("id") else int(parts[2])
+        await set_ticket_curator(tid, cid)
+        await message.answer(f"Куратор тикета #{tid}: {cid}")
+        await notify_user(api, cid, f"Вам назначен тикет #{tid}")
+        return
+
+    if low.startswith("шаблон "):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3 or not parts[1].isdigit():
+            await message.answer("шаблон N ID_тикета\nШаблоны: " + ", ".join(f"{k}) {v[:40]}" for k,v in SUPPORT_TEMPLATES.items()))
+            return
+        num, tid = parts[1], int(parts[2])
+        tpl = SUPPORT_TEMPLATES.get(num)
+        if not tpl:
+            await message.answer("Нет такого шаблона 1-5")
+            return
+        t = await get_ticket(tid)
+        if not t:
+            await message.answer("Тикет не найден")
+            return
+        await ticket_reply(tid, tpl, 1)
+        await notify_user(api, t["user_id"], f"🎫 Ответ по тикету #{tid}:\n{tpl}")
+        await message.answer("Шаблон отправлен")
+        return
+
+    if low.startswith("vip "):
+        parts = text.split()
+        # vip Nick gold
+        if len(parts) < 3:
+            await message.answer("vip Ник bronze|gold|platinum")
+            return
+        level = parts[-1].lower()
+        if level not in VIP_LEVELS:
+            await message.answer("Уровни: bronze gold platinum")
+            return
+        target = await resolve_player(" ".join(parts[1:-1]))
+        if not target:
+            await message.answer("Не найден")
+            return
+        await grant_vip(target["user_id"], level)
+        await admin_log(uid, "vip", target["nickname"], level)
+        await message.answer(f"VIP {level} → {target['nickname']}")
+        await notify_user(api, target["user_id"], f"⭐ Вам выдан {VIP_LEVELS[level]['label']}!")
+        return
+
+    if low.startswith("подаритьvip "):
+        parts = text.split()
+        if len(parts) < 3:
+            await message.answer("подаритьvip Ник gold")
+            return
+        level = parts[-1].lower()
+        if level not in VIP_LEVELS:
+            await message.answer("bronze|gold|platinum")
+            return
+        target = await resolve_player(" ".join(parts[1:-1]))
+        if not target:
+            await message.answer("Не найден")
+            return
+        price = VIP_LEVELS[level]["price"]
+        giver = await get_player(uid)
+        if not giver or (giver.get("prp_coin") or 0) < price:
+            await message.answer(f"Нужно {price} PC")
+            return
+        await add_prp_coin(uid, -price)
+        await grant_vip(target["user_id"], level)
+        await message.answer(f"Подарен VIP {level} → {target['nickname']}")
+        await notify_user(api, target["user_id"], f"🎁 Вам подарили {VIP_LEVELS[level]['label']}!")
+        return
+
+    if low.startswith("донатцель "):
+        # донатцель 10000 На новый мод
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3 or not parts[1].isdigit():
+            await message.answer("донатцель 10000 Описание")
+            return
+        await set_setting("donate_goal", parts[1])
+        await set_setting("donate_goal_title", parts[2])
+        await set_setting("donate_now", "0")
+        await message.answer(f"Цель: {parts[1]} PC — {parts[2]}")
+        return
+
+    if low == "донатцель":
+        goal = int(await get_setting("donate_goal", "0") or 0)
+        now = int(await get_setting("donate_now", "0") or 0)
+        title = await get_setting("donate_goal_title", "Донат")
+        if goal <= 0:
+            await message.answer("Цель не задана")
+            return
+        pct = min(100, now * 100 // goal)
+        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        await message.answer(f"🎯 {title}\n{bar} {pct}%\n{now}/{goal} PC")
+        return
+
+    if low.startswith("донатпромо "):
+        # донатпромо 20 2026-12-31
+        parts = text.split()
+        if len(parts) < 3:
+            await message.answer("донатпромо 20 2026-12-31")
+            return
+        await set_setting("donate_promo_pct", parts[1])
+        await set_setting("donate_promo_until", parts[2])
+        await message.answer(f"Промо -{parts[1]}% до {parts[2]}")
+        return
+
+    if low.startswith("конкурссоздать "):
+        title = text[len("конкурссоздать "):].strip()
+        cid = await contest_create(title)
+        await message.answer(f"📸 Конкурс #{cid}: {title}")
+        return
+
+    if low.startswith("подписка "):
+        # подписка Nick 30
+        parts = text.split()
+        if len(parts) < 3 or not parts[-1].isdigit():
+            await message.answer("подписка Ник 30")
+            return
+        days = int(parts[-1])
+        target = await resolve_player(" ".join(parts[1:-1]))
+        if not target:
+            await message.answer("Не найден")
+            return
+        until = (datetime.now() + timedelta(days=days)).isoformat()
+        await set_player_field(target["user_id"], "sub_until", until)
+        await grant_vip(target["user_id"], "gold", days)
+        await message.answer(f"Подписка {days}д → {target['nickname']}")
+        return
+
+
     # fake join/leave
+
+    if low in ("техработы вкл", "техработы on", "техработы 1"):
+        if not await is_owner(uid):
+            return
+        _maintenance = True
+        await set_setting("maintenance", "1")
+        await admin_log(uid, "maintenance", "on")
+        await message.answer("🔧 Техработы ВКЛ")
+        await notify_admins(api, "🔧 Техработы включены")
+        return
+
+    if low in ("техработы выкл", "техработы off", "техработы 0"):
+        if not await is_owner(uid):
+            return
+        _maintenance = False
+        await set_setting("maintenance", "0")
+        await admin_log(uid, "maintenance", "off")
+        await message.answer("✅ Техработы ВЫКЛ")
+        await notify_admins(api, "✅ Техработы выключены")
+        return
+
+    if low.startswith("выдатьcoin ") or low.startswith("выдатьpc "):
+        parts = text.split()
+        if len(parts) < 3 or not parts[-1].lstrip("-").isdigit():
+            await message.answer("выдатьcoin Ник 50")
+            return
+        amount = int(parts[-1])
+        target = await resolve_player(" ".join(parts[1:-1]))
+        if not target:
+            await message.answer("❌ Не найден")
+            return
+        await add_prp_coin(target["user_id"], amount)
+        extra = ""
+        if amount > 0 and CASHBACK_PERCENT > 0:
+            cb = max(1, amount * CASHBACK_PERCENT // 100)
+            await add_balance(target["user_id"], cb, "cashback")
+            extra = f" (+{cb}₽ кэшбэк)"
+            try:
+                now_pc = int(await get_setting("donate_now", "0") or 0)
+                await set_setting("donate_now", str(now_pc + amount))
+            except Exception:
+                pass
+        await admin_log(uid, "give_coin", target["nickname"], str(amount))
+        await message.answer(f"💎 +{amount} Prp Coin → {target['nickname']}{extra}")
+        await notify_user(api, target["user_id"], f"💎 Вам начислено {amount} Prp Coin{extra}")
+        return
+
+    if low.startswith("ивентдобавить "):
+        body = text[len("ивентдобавить "):].strip()
+        if "|" not in body:
+            await message.answer("ивентдобавить 05.09 18:00 Название | Описание")
+            return
+        left, desc = body.split("|", 1)
+        parts = left.strip().split(maxsplit=2)
+        if len(parts) < 3:
+            await message.answer("ивентдобавить 05.09 18:00 Название | Описание")
+            return
+        event_at = f"{parts[0]} {parts[1]}"
+        title = parts[2]
+        eid = await add_event(title, desc.strip(), event_at, uid)
+        await admin_log(uid, "event_add", str(eid), title)
+        await message.answer(f"📅 Ивент #{eid}: [{event_at}] {title}")
+        return
+
     if low.startswith("вход") or low.startswith("выход"):
         if not await is_owner(uid):
             return
@@ -2458,30 +4152,77 @@ async def text_commands(message: Message):
 
 
 async def background_worker():
-    """Отложенные рассылки + авто фейк вход/выход."""
+    """Рассылки, фейк-онлайн, зарплаты, онлайн-бонус, VIP."""
+    next_fake_in = random.randint(AUTO_FAKE_MIN_MINUTES, AUTO_FAKE_MAX_MINUTES) * 60
     last_fake = datetime.now()
+    last_hourly = datetime.now()
     while True:
         try:
-            # schedules
             for sid, body in await due_schedules():
                 ok = 0
                 for user_id, nick, status, level, balance, banned, email in await get_all_players():
                     if not banned:
-                        if await notify_user(bot.api, user_id, f"📢 {body}"):
+                        if await notify_user(bot.api, user_id, "📢 " + body):
                             ok += 1
                 await mark_schedule_done(sid)
-                await notify_admins(bot.api, f"⏰ Ивент/рассылка #{sid} отправлена: {ok} чел.\n{body}")
+                await notify_admins(bot.api, "⏰ Рассылка #" + str(sid) + ": " + str(ok) + " чел." + chr(10) + body)
 
-            # auto fake
-            if AUTO_FAKE_INTERVAL_MIN > 0:
-                if (datetime.now() - last_fake).total_seconds() >= AUTO_FAKE_INTERVAL_MIN * 60:
+            if AUTO_FAKE_MIN_MINUTES > 0 and AUTO_FAKE_MAX_MINUTES > 0:
+                if (datetime.now() - last_fake).total_seconds() >= next_fake_in:
                     nick = random.choice(list(FAKE_PLAYERS.keys()))
-                    action = random.choice(["join", "leave"])
+                    action = random.choices(["join", "leave"], weights=[55, 45], k=1)[0]
                     await notify_admins(bot.api, format_server_notify(nick, action))
                     last_fake = datetime.now()
+                    next_fake_in = random.randint(AUTO_FAKE_MIN_MINUTES, AUTO_FAKE_MAX_MINUTES) * 60
+
+            if (datetime.now() - last_hourly).total_seconds() >= 3600:
+                last_hourly = datetime.now()
+                today = date.today().isoformat()
+                for user_id, nick, status, level, balance, banned, email in await get_all_players():
+                    if banned:
+                        continue
+                    p = await get_player(user_id)
+                    if not p:
+                        continue
+                    try:
+                        async with aiosqlite.connect(DB_NAME) as db:
+                            async with db.execute(
+                                "SELECT points FROM activity_log WHERE user_id = ? AND day = ?",
+                                (user_id, today),
+                            ) as cur:
+                                row = await cur.fetchone()
+                        if row and row[0] > 0 and p.get("last_online_bonus") != today:
+                            await add_balance(user_id, ONLINE_BONUS, "online_bonus")
+                            await set_player_field(user_id, "last_online_bonus", today)
+                            await notify_user(bot.api, user_id, "🎁 Премия за активность: +" + str(ONLINE_BONUS) + "₽")
+                    except Exception:
+                        pass
+                    if p.get("fraction") and p.get("last_frac_salary") != today:
+                        await add_balance(user_id, FRACTION_SALARY, "frac_salary")
+                        await set_player_field(user_id, "last_frac_salary", today)
+                        await notify_user(
+                            bot.api, user_id,
+                            "💼 Зарплата фракции «" + str(p["fraction"]) + "»: +" + str(FRACTION_SALARY) + "₽",
+                        )
+                    if p.get("vip_until"):
+                        try:
+                            until = datetime.fromisoformat(p["vip_until"])
+                            left = (until - datetime.now()).total_seconds()
+                            if 0 < left <= 172800:
+                                await notify_user(
+                                    bot.api, user_id,
+                                    "⭐ VIP (" + str(p.get("vip_level")) + ") скоро закончится: " + until.strftime("%d.%m %H:%M"),
+                                )
+                            if left <= 0:
+                                await set_player_field(user_id, "vip_level", None)
+                                await set_player_field(user_id, "vip_until", None)
+                                await notify_user(bot.api, user_id, "⭐ Срок VIP истёк.")
+                        except Exception:
+                            pass
         except Exception:
             pass
         await asyncio.sleep(30)
+
 
 
 async def main():
@@ -2489,6 +4230,8 @@ async def main():
         raise SystemExit("Укажи TOKEN в .env")
     os.makedirs(os.path.dirname(DB_NAME) or ".", exist_ok=True)
     await init_db()
+    global _maintenance
+    _maintenance = (await get_setting("maintenance", "0")) == "1"
     # notify restart
     try:
         await notify_admins(
