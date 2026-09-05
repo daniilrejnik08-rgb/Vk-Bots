@@ -98,6 +98,15 @@ VIP_LEVELS = {
     "gold": {"days": 30, "price": 150, "label": "Gold VIP"},
     "platinum": {"days": 90, "price": 400, "label": "Platinum VIP"},
 }
+STAFF_APP_TYPES = {
+    "zbt": "ЗБТ (закрытый бета-тест)",
+    "dev": "Разработчик",
+    "helper": "Хелпер / модератор бота",
+    "media": "Медиа / контент",
+    "mapper": "Маппер / билдер",
+    "tester": "Тестер",
+}
+
 SUPPORT_TEMPLATES = {
     "1": "Здравствуйте! Ваша заявка принята, ожидайте ответа.",
     "2": "Опишите проблему подробнее и приложите скрин, если есть.",
@@ -205,6 +214,16 @@ class AppealState(BaseStateGroup):
 
 class TwoFAState(BaseStateGroup):
     CODE = 1
+
+
+class StaffAppState(BaseStateGroup):
+    TYPE = 1
+    TEXT = 2
+
+
+class BotSpeakState(BaseStateGroup):
+    TARGET = 1
+    TEXT = 2
 
 
 # -------------------- utils --------------------
@@ -543,6 +562,15 @@ async def init_db():
                 user_id INTEGER,
                 role TEXT DEFAULT 'member',
                 PRIMARY KEY (clan_id, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS staff_apps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                nickname TEXT,
+                app_type TEXT,
+                text TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS leader_apps (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1550,6 +1578,60 @@ async def leader_app_set(aid: int, status: str):
         await db.execute("UPDATE leader_apps SET status = ? WHERE id = ?", (status, aid))
         await db.commit()
 
+async def staff_app_add(user_id: int, nick: str, app_type: str, body: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO staff_apps (user_id, nickname, app_type, text, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, nick, app_type, body, now_str()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def staff_apps_list(status: str = "pending"):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, user_id, nickname, app_type, text, created_at FROM staff_apps WHERE status = ? ORDER BY id DESC",
+            (status,),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def staff_app_get(aid: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM staff_apps WHERE id = ?", (aid,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def staff_app_set(aid: int, status: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE staff_apps SET status = ? WHERE id = ?", (status, aid))
+        await db.commit()
+
+
+def staff_app_keyboard(aid: int):
+    return (
+        Keyboard(inline=True)
+        .add(Text("✅ Принять", payload={"cmd": "staff_ok", "id": aid}), color=KeyboardButtonColor.POSITIVE)
+        .add(Text("❌ Отказать", payload={"cmd": "staff_no", "id": aid}), color=KeyboardButtonColor.NEGATIVE)
+    )
+
+
+def staff_types_keyboard():
+    kb = Keyboard(one_time=True)
+    items = list(STAFF_APP_TYPES.items())
+    for i, (key, title) in enumerate(items):
+        kb.add(Text(title, payload={"cmd": "staff_type", "type": key}))
+        if (i + 1) % 2 == 0:
+            kb.row()
+    if len(items) % 2 != 0:
+        kb.row()
+    kb.add(Text("❌ Отмена"), color=KeyboardButtonColor.NEGATIVE)
+    return kb
+
+
 
 async def register_event(event_id: int, user_id: int) -> bool:
     async with aiosqlite.connect(DB_NAME) as db:
@@ -1715,7 +1797,7 @@ async def main_menu(user_id: int):
         kb.add(Text("⚙️ Аккаунт"), color=KeyboardButtonColor.SECONDARY)
         kb.row()
         kb.add(Text("🎫 Тикет"), color=KeyboardButtonColor.PRIMARY)
-        kb.add(Text("📰 Новости"), color=KeyboardButtonColor.SECONDARY)
+        kb.add(Text("📋 Заявки"), color=KeyboardButtonColor.PRIMARY)
         kb.add(Text("📡 Статус"), color=KeyboardButtonColor.PRIMARY)
         kb.row()
         kb.add(Text("ℹ️ Инфо"), color=KeyboardButtonColor.SECONDARY)
@@ -1812,6 +1894,9 @@ def admin_keyboard(show_fake: bool = False):
         .add(Text("⚖️ Апелляции"), color=KeyboardButtonColor.SECONDARY)
         .row()
         .add(Text("📰 Пост новости"), color=KeyboardButtonColor.PRIMARY)
+        .add(Text("📋 Заявки стафф"), color=KeyboardButtonColor.PRIMARY)
+        .row()
+        .add(Text("✍️ От имени бота"), color=KeyboardButtonColor.PRIMARY)
         .add(Text("🔫 Розыск админ"), color=KeyboardButtonColor.NEGATIVE)
         .row()
         .add(Text("💡 Идеи"), color=KeyboardButtonColor.PRIMARY)
@@ -3071,7 +3156,7 @@ async def lead_ok(message: Message):
     if not await has_role(message.from_id, "mod"):
         await message.answer("⛔ Нужны права mod+")
         return
-    aid = int(msg_payload(message)["id"])
+    aid = int(msg_payload(message).get("id") or 0)
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM leader_apps WHERE id = ?", (aid,)) as cur:
@@ -3094,7 +3179,7 @@ async def lead_no(message: Message):
     if not await has_role(message.from_id, "helper"):
         await message.answer("⛔ Нужны права helper+")
         return
-    aid = int(msg_payload(message)["id"])
+    aid = int(msg_payload(message).get("id") or 0)
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM leader_apps WHERE id = ?", (aid,)) as cur:
@@ -3376,7 +3461,7 @@ async def idea_ok(message: Message):
     if not await is_admin(message.from_id):
         await message.answer("⛔ Только админ")
         return
-    iid = int(msg_payload(message)["id"])
+    iid = int(msg_payload(message).get("id") or 0)
     idea = await get_idea(iid)
     if not idea:
         return
@@ -3390,7 +3475,7 @@ async def idea_no(message: Message):
     if not await is_admin(message.from_id):
         await message.answer("⛔ Только админ")
         return
-    iid = int(msg_payload(message)["id"])
+    iid = int(msg_payload(message).get("id") or 0)
     idea = await get_idea(iid)
     if not idea:
         return
@@ -3402,7 +3487,7 @@ async def idea_no(message: Message):
 async def idea_done(message: Message):
     if not await is_admin(message.from_id):
         return
-    iid = int(msg_payload(message)["id"])
+    iid = int(msg_payload(message).get("id") or 0)
     idea = await get_idea(iid)
     if not idea:
         return
@@ -3415,9 +3500,13 @@ async def frac_ok(message: Message):
     if not await has_role(message.from_id, "helper"):
         await message.answer("⛔ Нужны права helper+")
         return
-    app_id = int(msg_payload(message)["id"])
+    app_id = int(msg_payload(message).get("id") or 0)
     app = await get_frac_app(app_id)
     if not app:
+        await message.answer("Заявка не найдена")
+        return
+    if app.get("status") and app["status"] != "pending":
+        await message.answer("Заявка уже обработана")
         return
     await set_frac_app(app_id, "approved")
     await set_fraction(app["user_id"], app["fraction"])
@@ -3433,13 +3522,195 @@ async def frac_no(message: Message):
     if not await has_role(message.from_id, "helper"):
         await message.answer("⛔ Нужны права helper+")
         return
-    app_id = int(msg_payload(message)["id"])
+    app_id = int(msg_payload(message).get("id") or 0)
     app = await get_frac_app(app_id)
     if not app:
+        await message.answer("Заявка не найдена")
+        return
+    if app.get("status") and app["status"] != "pending":
+        await message.answer("Заявка уже обработана")
         return
     await set_frac_app(app_id, "rejected")
     await message.answer(f"❌ Отказ по заявке #{app_id}")
     await notify_user(message.ctx_api, app["user_id"], f"🏛️ Заявка во фракцию {app['fraction']} отклонена.")
+
+
+
+@bot.on.message(text=["📋 Заявки", "Заявки", "заявки", "збт", "ЗБТ"])
+async def staff_apps_menu(message: Message):
+    player = await require_player(message)
+    if not player:
+        return
+    await message.answer(
+        "📋 Заявки в команду / доступ\n\n"
+        "Выбери тип заявки:\n"
+        "• ЗБТ — закрытый бета-тест\n"
+        "• Разработчик, хелпер, медиа, маппер, тестер\n\n"
+        "После выбора опиши опыт и почему тебя взять.",
+        keyboard=staff_types_keyboard(),
+    )
+
+
+@bot.on.message(state=StaffAppState.TEXT)
+async def staff_app_text(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    body = (message.text or "").strip()
+    if len(body) < 15:
+        await message.answer("Напиши подробнее (от 15 символов):")
+        return
+    payload = dict(message.state_peer.payload or {})
+    app_type = payload.get("app_type", "zbt")
+    player = await get_player(message.from_id)
+    nick = player["nickname"] if player else str(message.from_id)
+    aid = await staff_app_add(message.from_id, nick, app_type, body)
+    await state_dispenser.delete(message.peer_id)
+    title = STAFF_APP_TYPES.get(app_type, app_type)
+    await message.answer(
+        f"✅ Заявка #{aid} «{title}» отправлена. Ожидай ответа.",
+        keyboard=await main_menu(message.from_id),
+    )
+    await notify_admins(
+        message.ctx_api,
+        f"📋 Заявка #{aid} [{title}]\n"
+        f"[id{message.from_id}|{nick}]\n{body}",
+    )
+    # also send with buttons to admins
+    for admin_id in await all_admin_ids():
+        try:
+            await notify_user(
+                message.ctx_api, admin_id,
+                f"📋 #{aid} {title} — кнопки:",
+                keyboard=staff_app_keyboard(aid),
+            )
+        except Exception:
+            pass
+
+
+@bot.on.message(text=["📋 Заявки стафф", "Заявки стафф"])
+async def staff_admin_list(message: Message):
+    if not await has_role(message.from_id, "helper"):
+        await message.answer("⛔ Нет доступа")
+        return
+    rows = await staff_apps_list("pending")
+    if not rows:
+        await message.answer("Нет новых заявок.")
+        return
+    for aid, uid, nick, app_type, body, created in rows:
+        title = STAFF_APP_TYPES.get(app_type, app_type)
+        await message.answer(
+            f"📋 #{aid} [{title}]\n[id{uid}|{nick}] ({created})\n{body}",
+            keyboard=staff_app_keyboard(aid),
+        )
+
+
+async def staff_ok(message: Message):
+    if not await has_role(message.from_id, "mod"):
+        await message.answer("⛔ Нужны права mod+")
+        return
+    data = msg_payload(message)
+    aid = int(data.get("id", 0))
+    app = await staff_app_get(aid)
+    if not app:
+        await message.answer("Заявка не найдена")
+        return
+    if app["status"] != "pending":
+        await message.answer("Уже обработана")
+        return
+    await staff_app_set(aid, "approved")
+    title = STAFF_APP_TYPES.get(app["app_type"], app["app_type"])
+    await admin_log(message.from_id, "staff_ok", app["nickname"], app["app_type"])
+    await message.answer(f"✅ Заявка #{aid} ({title}) принята")
+    await notify_user(
+        message.ctx_api, app["user_id"],
+        f"✅ Ваша заявка #{aid} «{title}» принята!\nС вами свяжется администрация.",
+    )
+    if app["app_type"] == "zbt":
+        await badge_add(app["user_id"], "ZBT")
+    elif app["app_type"] == "dev":
+        await badge_add(app["user_id"], "Dev")
+
+
+async def staff_no(message: Message):
+    if not await has_role(message.from_id, "helper"):
+        await message.answer("⛔ Нет доступа")
+        return
+    data = msg_payload(message)
+    aid = int(data.get("id", 0))
+    app = await staff_app_get(aid)
+    if not app:
+        await message.answer("Заявка не найдена")
+        return
+    if app["status"] != "pending":
+        await message.answer("Уже обработана")
+        return
+    await staff_app_set(aid, "rejected")
+    title = STAFF_APP_TYPES.get(app["app_type"], app["app_type"])
+    await message.answer(f"❌ Отказ по заявке #{aid}")
+    await notify_user(
+        message.ctx_api, app["user_id"],
+        f"❌ Ваша заявка #{aid} «{title}» отклонена.",
+    )
+
+
+@bot.on.message(text=["✍️ От имени бота", "От имени бота", "от имени бота"])
+async def bot_speak_start(message: Message):
+    if not await has_role(message.from_id, "mod"):
+        await message.answer("⛔ Нужны права mod+")
+        return
+    await message.answer(
+        "✍️ Сообщение от имени бота\n\n"
+        "Кому написать? Ник, email или id:\n"
+        "(или «всем» для рассылки всем игрокам)",
+        keyboard=cancel_keyboard(),
+    )
+    await state_dispenser.set(message.peer_id, BotSpeakState.TARGET)
+
+
+@bot.on.message(state=BotSpeakState.TARGET)
+async def bot_speak_target(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    who = (message.text or "").strip()
+    await state_dispenser.set(message.peer_id, BotSpeakState.TEXT, target=who)
+    await message.answer("Текст сообщения (от имени бота):", keyboard=cancel_keyboard())
+
+
+@bot.on.message(state=BotSpeakState.TEXT)
+async def bot_speak_send(message: Message):
+    if message.text in ("Отмена", "❌ Отмена"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("Отменено.", keyboard=await main_menu(message.from_id))
+        return
+    body = (message.text or "").strip()
+    if len(body) < 1:
+        await message.answer("Пусто")
+        return
+    who = (message.state_peer.payload or {}).get("target", "")
+    await state_dispenser.delete(message.peer_id)
+    if who.lower() in ("всем", "all", "*"):
+        ok = 0
+        for user_id, nick, status, level, balance, banned, email in await get_all_players():
+            if not banned and await notify_user(message.ctx_api, user_id, body):
+                ok += 1
+        await admin_log(message.from_id, "bot_speak_all", "", body[:80])
+        await message.answer(f"✅ От имени бота отправлено: {ok} игрокам", keyboard=await main_menu(message.from_id))
+        return
+    target = await resolve_player(who)
+    if not target:
+        await message.answer("❌ Игрок не найден", keyboard=await main_menu(message.from_id))
+        return
+    ok = await notify_user(message.ctx_api, target["user_id"], body)
+    await admin_log(message.from_id, "bot_speak", target["nickname"], body[:80])
+    await message.answer(
+        f"{'✅' if ok else '❌'} Сообщение {'доставлено' if ok else 'не доставлено'} → {target['nickname']}",
+        keyboard=await main_menu(message.from_id),
+    )
+
 
 
 # ----- text commands -----
@@ -3475,6 +3746,22 @@ async def payload_router(message: Message):
             await vote_cast(message)
         elif cmd == "mbuy":
             await market_buy(message)
+        elif cmd == "staff_ok":
+            await staff_ok(message)
+        elif cmd == "staff_no":
+            await staff_no(message)
+        elif cmd == "staff_type":
+            # выбор типа заявки с inline/payload кнопки
+            app_type = data.get("type", "zbt")
+            if app_type not in STAFF_APP_TYPES:
+                await message.answer("Неизвестный тип")
+                return
+            await state_dispenser.set(message.peer_id, StaffAppState.TEXT, app_type=app_type)
+            title = STAFF_APP_TYPES[app_type]
+            await message.answer(
+                f"📋 Заявка: {title}" + chr(10) + chr(10) + "Опиши опыт, почему тебя взять, контакты:",
+                keyboard=cancel_keyboard(),
+            )
     except Exception as e:
         try:
             await message.answer(f"Ошибка кнопки: {e}")
@@ -3513,6 +3800,20 @@ async def text_commands(message: Message):
     low = text.lower()
     uid = message.from_id
     api = message.ctx_api
+
+
+    # выбор типа заявки по тексту кнопки (если payload не пришёл)
+    for _k, _title in STAFF_APP_TYPES.items():
+        if text == _title:
+            player = await require_player(message)
+            if not player:
+                return
+            await state_dispenser.set(message.peer_id, StaffAppState.TEXT, app_type=_k)
+            await message.answer(
+                "📋 Заявка: " + _title + chr(10) + chr(10) + "Опиши опыт, почему тебя взять, контакты:",
+                keyboard=cancel_keyboard(),
+            )
+            return
 
     # promo for players
     if low.startswith("промокод "):
@@ -3641,6 +3942,38 @@ async def text_commands(message: Message):
     if not await is_admin(uid):
         return
 
+
+
+    if low.startswith("отбота ") or low.startswith("бот "):
+        if not await has_role(uid, "mod"):
+            return
+        rest = text.split(maxsplit=1)
+        if len(rest) < 2:
+            await message.answer("отбота Ник|id|всем Текст сообщения")
+            return
+        # отбота всем Текст  OR отбота Nick Текст
+        body_full = rest[1]
+        if body_full.lower().startswith("всем "):
+            msg_body = body_full[5:].strip()
+            ok = 0
+            for user_id, nick, status, level, balance, banned, email in await get_all_players():
+                if not banned and await notify_user(api, user_id, msg_body):
+                    ok += 1
+            await admin_log(uid, "bot_speak_all", "", msg_body[:80])
+            await message.answer(f"✅ От бота всем: {ok}")
+            return
+        parts = body_full.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.answer("отбота Ник Текст")
+            return
+        target = await resolve_player(parts[0])
+        if not target:
+            await message.answer("Не найден")
+            return
+        ok = await notify_user(api, target["user_id"], parts[1])
+        await admin_log(uid, "bot_speak", target["nickname"], parts[1][:80])
+        await message.answer(("✅" if ok else "❌") + f" → {target['nickname']}")
+        return
 
     if low.startswith("штраф "):
         parts = text.split()
