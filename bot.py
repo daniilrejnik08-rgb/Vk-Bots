@@ -12,6 +12,40 @@ from dotenv import load_dotenv
 from vkbottle import BaseStateGroup, BuiltinStateDispenser, Keyboard, KeyboardButtonColor, Text
 from vkbottle.bot import Bot, Message
 from vkbottle.dispatch.rules.base import PayloadRule
+try:
+    from vkbottle.dispatch.rules.base import PayloadContainsRule as _PayloadContains
+except Exception:
+    _PayloadContains = None
+
+
+def msg_payload(message: Message) -> dict:
+    try:
+        data = message.get_payload_json()
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, str):
+            import json as _json
+            return _json.loads(data)
+    except Exception:
+        pass
+    # raw
+    try:
+        raw = getattr(message, "payload", None)
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw:
+            import json as _json
+            return _json.loads(raw)
+    except Exception:
+        pass
+    return {}
+
+def payload_cmd(cmd: str):
+    """Правило: payload содержит cmd=... (не требует точного совпадения всего dict)."""
+    if _PayloadContains is not None:
+        return _PayloadContains({"cmd": cmd})
+    return PayloadRule({"cmd": cmd})  # fallback
+
 
 load_dotenv()
 
@@ -2180,12 +2214,11 @@ async def shop(message: Message):
     await message.answer("\n".join(lines), keyboard=shop_keyboard())
 
 
-@bot.on.message(PayloadRule({"cmd": "buy"}))
 async def buy_item(message: Message):
     player = await require_player(message)
     if not player:
         return
-    item = (message.get_payload_json() or {}).get("item")
+    item = msg_payload(message).get("item")
     if item not in SHOP:
         return
     price, _ = SHOP[item]
@@ -2434,12 +2467,11 @@ async def votes_list(message: Message):
         await message.answer(f"🗳️ Голосование #{vid}{mark}\n{question}", keyboard=kb)
 
 
-@bot.on.message(PayloadRule({"cmd": "vote"}))
 async def vote_cast(message: Message):
     player = await require_player(message)
     if not player:
         return
-    data = message.get_payload_json() or {}
+    data = msg_payload(message)
     vid, opt = int(data["vid"]), int(data["opt"])
     vote = await get_vote(vid)
     if not vote or not vote["active"]:
@@ -2536,12 +2568,11 @@ async def coin_shop(message: Message):
     await message.answer("\n".join(lines), keyboard=kb)
 
 
-@bot.on.message(PayloadRule({"cmd": "buycoin"}))
 async def buy_coin_item(message: Message):
     player = await require_player(message)
     if not player:
         return
-    item = (message.get_payload_json() or {}).get("item")
+    item = msg_payload(message).get("item")
     if item not in COIN_SHOP:
         return
     price, desc = COIN_SHOP[item]
@@ -2778,12 +2809,11 @@ async def market_photo(message: Message):
     await message.answer(f"✅ Лот #{mid} на бирже!", keyboard=await main_menu(message.from_id))
 
 
-@bot.on.message(PayloadRule({"cmd": "mbuy"}))
 async def market_buy(message: Message):
     player = await require_player(message)
     if not player:
         return
-    mid = int((message.get_payload_json() or {}).get("id", 0))
+    mid = int(msg_payload(message).get("id", 0))
     lot = await market_get(mid)
     if not lot or not lot["active"]:
         await message.answer("Лот недоступен")
@@ -3037,11 +3067,11 @@ async def leader_apps_admin(message: Message):
         )
 
 
-@bot.on.message(PayloadRule({"cmd": "lead_ok"}))
 async def lead_ok(message: Message):
     if not await has_role(message.from_id, "mod"):
+        await message.answer("⛔ Нужны права mod+")
         return
-    aid = int((message.get_payload_json() or {})["id"])
+    aid = int(msg_payload(message)["id"])
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM leader_apps WHERE id = ?", (aid,)) as cur:
@@ -3060,11 +3090,11 @@ async def lead_ok(message: Message):
     )
 
 
-@bot.on.message(PayloadRule({"cmd": "lead_no"}))
 async def lead_no(message: Message):
     if not await has_role(message.from_id, "helper"):
+        await message.answer("⛔ Нужны права helper+")
         return
-    aid = int((message.get_payload_json() or {})["id"])
+    aid = int(msg_payload(message)["id"])
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM leader_apps WHERE id = ?", (aid,)) as cur:
@@ -3342,11 +3372,11 @@ async def fake_leave_btn(message: Message):
 
 
 # payloads
-@bot.on.message(PayloadRule({"cmd": "idea_ok"}))
 async def idea_ok(message: Message):
     if not await is_admin(message.from_id):
+        await message.answer("⛔ Только админ")
         return
-    iid = int((message.get_payload_json() or {})["id"])
+    iid = int(msg_payload(message)["id"])
     idea = await get_idea(iid)
     if not idea:
         return
@@ -3356,11 +3386,11 @@ async def idea_ok(message: Message):
     await notify_user(message.ctx_api, idea["user_id"], f"✅ Идея #{iid} принята!")
 
 
-@bot.on.message(PayloadRule({"cmd": "idea_no"}))
 async def idea_no(message: Message):
     if not await is_admin(message.from_id):
+        await message.answer("⛔ Только админ")
         return
-    iid = int((message.get_payload_json() or {})["id"])
+    iid = int(msg_payload(message)["id"])
     idea = await get_idea(iid)
     if not idea:
         return
@@ -3369,11 +3399,10 @@ async def idea_no(message: Message):
     await notify_user(message.ctx_api, idea["user_id"], f"❌ Идея #{iid} отклонена.")
 
 
-@bot.on.message(PayloadRule({"cmd": "idea_done"}))
 async def idea_done(message: Message):
     if not await is_admin(message.from_id):
         return
-    iid = int((message.get_payload_json() or {})["id"])
+    iid = int(msg_payload(message)["id"])
     idea = await get_idea(iid)
     if not idea:
         return
@@ -3382,11 +3411,11 @@ async def idea_done(message: Message):
     await notify_user(message.ctx_api, idea["user_id"], f"✔️ Идея #{iid} реализована!")
 
 
-@bot.on.message(PayloadRule({"cmd": "frac_ok"}))
 async def frac_ok(message: Message):
     if not await has_role(message.from_id, "helper"):
+        await message.answer("⛔ Нужны права helper+")
         return
-    app_id = int((message.get_payload_json() or {})["id"])
+    app_id = int(msg_payload(message)["id"])
     app = await get_frac_app(app_id)
     if not app:
         return
@@ -3400,11 +3429,11 @@ async def frac_ok(message: Message):
     )
 
 
-@bot.on.message(PayloadRule({"cmd": "frac_no"}))
 async def frac_no(message: Message):
     if not await has_role(message.from_id, "helper"):
+        await message.answer("⛔ Нужны права helper+")
         return
-    app_id = int((message.get_payload_json() or {})["id"])
+    app_id = int(msg_payload(message)["id"])
     app = await get_frac_app(app_id)
     if not app:
         return
@@ -3414,8 +3443,56 @@ async def frac_no(message: Message):
 
 
 # ----- text commands -----
+
+@bot.on.message()
+async def payload_router(message: Message):
+    """Запасной обработчик inline-кнопок Принять/Отказать и др."""
+    data = msg_payload(message)
+    cmd = data.get("cmd") if isinstance(data, dict) else None
+    if not cmd:
+        return
+    # делегируем существующим функциям по имени cmd
+    try:
+        if cmd == "idea_ok":
+            await idea_ok(message)
+        elif cmd == "idea_no":
+            await idea_no(message)
+        elif cmd == "idea_done":
+            await idea_done(message)
+        elif cmd == "frac_ok":
+            await frac_ok(message)
+        elif cmd == "frac_no":
+            await frac_no(message)
+        elif cmd == "lead_ok":
+            await lead_ok(message)
+        elif cmd == "lead_no":
+            await lead_no(message)
+        elif cmd == "buy":
+            await buy_item(message)
+        elif cmd == "buycoin":
+            await buy_coin_item(message)
+        elif cmd == "vote":
+            await vote_cast(message)
+        elif cmd == "mbuy":
+            await market_buy(message)
+    except Exception as e:
+        try:
+            await message.answer(f"Ошибка кнопки: {e}")
+        except Exception:
+            pass
+
+
 @bot.on.message()
 async def text_commands(message: Message):
+    # Inline-кнопки обрабатываются отдельными handlers (payload_cmd)
+    pl = {}
+    try:
+        pl = msg_payload(message)
+    except Exception:
+        pl = {}
+    if isinstance(pl, dict) and pl.get("cmd"):
+        return
+
     text = (message.text or "").strip()
     if not text:
         return
